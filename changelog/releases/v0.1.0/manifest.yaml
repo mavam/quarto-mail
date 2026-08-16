@@ -1,0 +1,9 @@
+created: 2026-08-16
+title: Markdown email as a build artifact
+intro: >-
+  Quarto Mail turns Markdown email into deterministic plain-text and compact HTML
+  artifacts, making messages easy to review before sending. The initial release adds
+  reusable sender, identity, and signature profiles, named recipients, replies, attachments,
+  and inline rich signatures.
+source:
+  mode: sync-stable-queue
