@@ -1,0 +1,24 @@
+mail-profiles:
+  senders:
+    personal:
+      account: user@example.com
+      from: user@example.com
+    work:
+      account: work@example.com
+      from: alias@example.com
+  identities:
+    personal:
+      name: Alex
+    formal:
+      name: Alex Example
+      indent: 4
+    work:
+      name: Alex Example
+  signatures:
+    work:
+      plain: |-
+        Alex Example
+        Role
+        Example Organization
+      html: |-
+        <table role="presentation" style="font-family:Arial,Helvetica,sans-serif;font-size:14px"><tr><td><strong>Alex Example</strong><br>Role<br><a href="https://example.com">Example Organization</a></td></tr></table>

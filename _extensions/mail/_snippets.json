@@ -1,0 +1,46 @@
+{
+  "Mail format setup": {
+    "prefix": "format",
+    "body": [
+      "format: mail-html"
+    ],
+    "description": "Render a deterministic, transport-neutral mail bundle."
+  },
+  "Plain text output": {
+    "prefix": "format-plain",
+    "body": [
+      "format: mail-plain"
+    ],
+    "description": "Render the exact plain-text message body."
+  },
+  "Gog output adapter": {
+    "prefix": "format-gog",
+    "body": [
+      "format: mail-gog"
+    ],
+    "description": "Render a mail bundle and emit a gog command."
+  },
+  "Mail message metadata": {
+    "prefix": "mail",
+    "body": [
+      "mail:",
+      "  sender: ${1:personal}",
+      "  identity: ${2:personal}",
+      "  closing: ${3:Best,}",
+      "  to:",
+      "    - ${4:Recipient Name <recipient@example.com>}",
+      "  cc: []",
+      "  bcc: []",
+      "  subject: ${5:Subject}",
+      "  attachments: []"
+    ],
+    "description": "Insert the metadata for one email message."
+  },
+  "Mail signature": {
+    "prefix": "signature",
+    "body": [
+      "signature: ${1:work}"
+    ],
+    "description": "Select an optional signature block after the sign-off identity."
+  }
+}

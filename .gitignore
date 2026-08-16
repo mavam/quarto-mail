@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.quarto/
+*.mail/
+.quarto-mail-*.qmd
+*.sh
+/*.html
+.DS_Store
+
+/.quarto/
+**/*.quarto_ipynb

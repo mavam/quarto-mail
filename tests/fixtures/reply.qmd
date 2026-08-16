@@ -1,0 +1,18 @@
+---
+format: mail-html
+mail:
+  sender: personal
+  identity: personal
+  to:
+    - Original Sender <sender@example.com>
+  cc:
+    - Other Participant <participant@example.com>
+  bcc: []
+  attachments: []
+  reply-to-message-id: message-123
+  quote: true
+---
+
+Hello,
+
+Thank you for your message.

@@ -1,0 +1,24 @@
+---
+format: mail-html
+mail:
+  sender: work
+  identity: work
+  signature: work
+  to:
+    - Customer Example <customer@example.com>
+  cc:
+    - Colleague Example <colleague@example.com>
+  bcc:
+    - Archive Example <archive@example.com>
+  subject: Project update
+  closing: Best,
+  attachments:
+    - attachment.txt
+---
+
+Hello,
+
+The update includes:
+
+1. **Faster** pipelines
+2. A labeled [project link](https://example.com)

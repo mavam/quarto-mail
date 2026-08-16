@@ -1,0 +1,4 @@
+id: quarto-mail
+name: Quarto Mail
+description: 'Email as a build artifact: author in Markdown, render deterministic text and HTML.'
+repository: mavam/quarto-mail

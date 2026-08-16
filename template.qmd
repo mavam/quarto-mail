@@ -1,0 +1,33 @@
+---
+format: mail-html
+mail:
+  # Sender: personal (user@example.com) or work (alias@example.com).
+  sender: personal
+  # Optional sign-off name: personal (Alex), formal (Alex Example), or work
+  # (Alex Example). Delete the field to omit the name.
+  identity: personal
+  # Optional phrase before the sign-off name. Delete it to sign with the name
+  # only.
+  closing: Best,
+  # Optional signature after the sign-off: uncomment work for the Example
+  # Organization block.
+  # signature: work
+  # List all recipients, including for replies. Preserve known display names as
+  # `First Last <email@example.com>`.
+  to:
+    - Jane Doe <jane@example.com>
+  cc: []
+  bcc: []
+  # Required for a new message. Delete it from a reply to inherit the subject.
+  subject: Example subject
+  # Attachment paths are relative to this file.
+  attachments: []
+  # Reply-only options: set the Gmail message ID, then optionally include the
+  # original message below the reply.
+  # reply-to-message-id: MESSAGE_ID
+  # quote: true
+---
+
+Hi Jane,
+
+Write the message body in Markdown.

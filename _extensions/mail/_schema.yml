@@ -1,0 +1,66 @@
+$schema: https://m.canouil.dev/quarto-wizard/assets/schema/v1/extension-schema.json
+
+formats:
+  mail-html: &mail-format
+    mail-profiles:
+      type: object
+      description: Reusable sender, identity, and signature profiles.
+      properties:
+        senders:
+          type: object
+          description: Named sender profiles.
+        identities:
+          type: object
+          description: Named sign-off identity profiles.
+        signatures:
+          type: object
+          description: Named email signature profiles with plain and optional HTML content.
+    mail:
+      type: object
+      description: Metadata for one email message.
+      properties:
+        sender:
+          type: string
+          description: Named sender profile from mail-profiles.senders.
+        identity:
+          type: string
+          description: Optional sign-off identity appended after the closing when present.
+        signature:
+          type: string
+          description: Optional signature profile appended after the sign-off.
+        to:
+          type: array
+          description: Explicit primary recipient mailboxes, with optional display names.
+          items:
+            type: string
+        cc:
+          type: array
+          description: Explicit carbon-copy recipient mailboxes, with optional display names.
+          items:
+            type: string
+        bcc:
+          type: array
+          description: Explicit blind-carbon-copy recipient mailboxes, with optional display names.
+          items:
+            type: string
+        subject:
+          type: string
+          description: Required subject for a new message; optional for a reply.
+        closing:
+          type: string
+          description: Optional phrase placed before the sign-off identity.
+        attachments:
+          type: array
+          description: Attachment paths relative to the source document.
+          items:
+            type: string
+            completion:
+              type: file
+        reply-to-message-id:
+          type: string
+          description: Provider message ID that this message replies to.
+        quote:
+          type: boolean
+          description: Include the quoted original message in a reply.
+  mail-plain: *mail-format
+  mail-gog: *mail-format
