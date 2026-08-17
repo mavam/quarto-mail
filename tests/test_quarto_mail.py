@@ -108,7 +108,15 @@ class QuartoMailTests(unittest.TestCase):
         self.assertNotIn("<p>", message.body_html)
         self.assertNotIn("mail-signature-separator", message.body_html)
         self.assertIn('<a href="https://example.com">', message.body_html)
-        self.assertIn('<ol type="1">', message.body_html)
+        self.assertIn(
+            '<div>The update includes:</div>\n<ol type="1">',
+            message.body_html,
+        )
+        self.assertIn(
+            '</ol>\n<div class="mail-closing">Best,</div>',
+            message.body_html,
+        )
+        self.assertNotIn("</ol>\n<div><br></div>", message.body_html)
         body_without_signature = message.body_html.split(
             '<div class="mail-signature">', 1
         )[0]

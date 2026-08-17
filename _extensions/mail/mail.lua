@@ -424,27 +424,29 @@ local function render_email_html(
   )
   local sections = {}
   if opening ~= nil then
-    table.insert(
-      sections,
-      '<div class="mail-opening">' .. html_escape(opening) .. "</div>"
-    )
+    table.insert(sections, {
+      html = '<div class="mail-opening">' .. html_escape(opening) .. "</div>",
+      native_spacing = false,
+    })
   end
   for _, block in ipairs(message_blocks) do
-    local html = render_block_html(block)
-    table.insert(sections, html)
+    table.insert(sections, {
+      html = render_block_html(block),
+      native_spacing = block.tag == "BulletList" or block.tag == "OrderedList",
+    })
   end
   if closing ~= nil then
-    table.insert(
-      sections,
-      '<div class="mail-closing">' .. html_escape(closing) .. "</div>"
-    )
+    table.insert(sections, {
+      html = '<div class="mail-closing">' .. html_escape(closing) .. "</div>",
+      native_spacing = false,
+    })
   end
   if identity ~= nil then
-    table.insert(
-      sections,
-      '<div class="mail-identity">' ..
-        string.rep("&nbsp;", identity_indent) .. html_escape(identity) .. "</div>"
-    )
+    table.insert(sections, {
+      html = '<div class="mail-identity">' ..
+        string.rep("&nbsp;", identity_indent) .. html_escape(identity) .. "</div>",
+      native_spacing = false,
+    })
   end
   if signature_plain ~= nil then
     local html = signature_html
@@ -452,10 +454,23 @@ local function render_email_html(
       local prefix = string.rep("&nbsp;", signature_indent)
       html = prefix .. html_escape(signature_plain):gsub("\n", "<br>" .. prefix)
     end
-    table.insert(sections, '<div class="mail-signature">' .. html .. "</div>")
+    table.insert(sections, {
+      html = '<div class="mail-signature">' .. html .. "</div>",
+      native_spacing = false,
+    })
+  end
+  local html = {}
+  for index, section in ipairs(sections) do
+    local previous = sections[index - 1]
+    if previous ~= nil and
+        not previous.native_spacing and
+        not section.native_spacing then
+      table.insert(html, "<div><br></div>")
+    end
+    table.insert(html, section.html)
   end
   return '<div class="mail-body">\n' ..
-    table.concat(sections, "\n<div><br></div>\n") .. "\n</div>\n"
+    table.concat(html, "\n") .. "\n</div>\n"
 end
 
 function Pandoc(document)
