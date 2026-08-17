@@ -29,7 +29,10 @@ class RenderedMessage:
     def __init__(self, name: str):
         self.source = ROOT / f".quarto-mail-test-{uuid.uuid4()}.qmd"
         source = (FIXTURES / f"{name}.qmd").read_text(encoding="utf-8")
-        source = source.replace("- attachment.txt", "- tests/fixtures/attachment.txt")
+        source = source.replace(
+            "- attachment~path~.txt",
+            "- tests/fixtures/attachment~path~.txt",
+        )
         self.source.write_text(source, encoding="utf-8")
         self.bundle = self.source.with_suffix(".mail")
         self.preview = self.source.with_suffix(".html")
@@ -86,7 +89,7 @@ class QuartoMailTests(unittest.TestCase):
     def test_renders_a_complete_message(self) -> None:
         message = self.render("work")
         manifest = message.manifest
-        attachment = str((FIXTURES / "attachment.txt").resolve())
+        attachment = str((FIXTURES / "attachment~path~.txt").resolve())
 
         self.assertTrue(message.preview.is_file())
         self.assertEqual(manifest["account"], "work@example.com")

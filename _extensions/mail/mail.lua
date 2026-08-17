@@ -385,7 +385,7 @@ end
 
 local function source_mail_metadata(source)
   local contents = read_file(source)
-  local parsed = pandoc.read(contents, "markdown-smart")
+  local parsed = pandoc.read(contents, "markdown-smart-subscript")
   return parsed.meta.mail
 end
 

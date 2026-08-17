@@ -14,7 +14,7 @@ mail:
     - Archive Example <archive@example.com>
   subject: Project update
   attachments:
-    - attachment.txt
+    - attachment~path~.txt
 ---
 
 The update includes:
