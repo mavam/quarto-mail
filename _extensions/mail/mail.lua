@@ -267,10 +267,10 @@ local function text_inlines(text)
 end
 
 local function identity_block(name, indent)
-  local prefix = string.rep(" ", indent)
+  local prefix = string.rep("\u{00a0}", indent)
   return pandoc.Div(
     { pandoc.Para(text_inlines(prefix .. name)) },
-    pandoc.Attr("", { "mail-identity" }, { { "style", "white-space: pre-wrap" } })
+    pandoc.Attr("", { "mail-identity" })
   )
 end
 
@@ -279,7 +279,7 @@ local function signature_block(plain, indent, html)
   if html ~= nil then
     table.insert(blocks, pandoc.RawBlock("html", html))
   else
-    local prefix = string.rep(" ", indent)
+    local prefix = string.rep("\u{00a0}", indent)
     local inlines = {}
     local index = 0
     for line in (plain .. "\n"):gmatch("(.-)\n") do
@@ -405,22 +405,11 @@ local function render_block_html(block)
     ):gsub("\n+$", "")
     return "<div>" .. html .. "</div>"
   end
-  local html = pandoc.write(
+  return pandoc.write(
     pandoc.Pandoc({ block }),
     "html",
     { wrap_text = "none" }
   ):gsub("\n+$", "")
-  if block.tag == "BulletList" or block.tag == "OrderedList" then
-    html = html:gsub(
-      "<ul([^>]*)>",
-      '<ul%1 style="margin:0; padding-left:1.75em;">'
-    )
-    html = html:gsub(
-      "<ol([^>]*)>",
-      '<ol%1 style="margin:0; padding-left:1.75em;">'
-    )
-  end
-  return html
 end
 
 local function render_email_html(
