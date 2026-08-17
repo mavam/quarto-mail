@@ -1,0 +1,8 @@
+created: 2026-08-17
+title: Native email-client rendering
+intro: "Quarto Mail now renders HTML message bodies using the recipient\u2019s native\
+  \ email-client typography, colors, and list presentation. It keeps generated HTML\
+  \ minimal while preserving explicitly configured rich signatures."
+source:
+  mode: sync-stable-queue
+  previous_stable: v0.2.0
