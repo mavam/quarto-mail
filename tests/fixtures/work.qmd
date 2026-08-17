@@ -3,6 +3,7 @@ format: mail-html
 mail:
   sender: work
   opening: Hello,
+  closing: Best,
   identity: work
   signature: work
   to:
@@ -12,7 +13,6 @@ mail:
   bcc:
     - Archive Example <archive@example.com>
   subject: Project update
-  closing: Best,
   attachments:
     - attachment.txt
 ---

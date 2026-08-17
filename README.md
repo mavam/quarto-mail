@@ -77,8 +77,8 @@ format: mail-html
 mail:
   sender: personal
   opening: Hi Jane,
-  identity: personal
   closing: Best,
+  identity: personal
   to:
     - Jane Doe <jane@example.com>
   cc: []

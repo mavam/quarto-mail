@@ -5,12 +5,12 @@ mail:
   sender: personal
   # Optional greeting before the message content. Delete it to omit the greeting.
   opening: Hi Jane,
-  # Optional sign-off name: personal (Alex), formal (Alex Example), or work
-  # (Alex Example). Delete the field to omit the name.
-  identity: personal
   # Optional phrase before the sign-off name. Delete it to sign with the name
   # only.
   closing: Best,
+  # Optional sign-off name: personal (Alex), formal (Alex Example), or work
+  # (Alex Example). Delete the field to omit the name.
+  identity: personal
   # Optional signature after the sign-off: uncomment work for the Example
   # Organization block.
   # signature: work
