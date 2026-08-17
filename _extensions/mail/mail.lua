@@ -405,11 +405,22 @@ local function render_block_html(block)
     ):gsub("\n+$", "")
     return "<div>" .. html .. "</div>"
   end
-  return pandoc.write(
+  local html = pandoc.write(
     pandoc.Pandoc({ block }),
     "html",
     { wrap_text = "none" }
   ):gsub("\n+$", "")
+  if block.tag == "BulletList" or block.tag == "OrderedList" then
+    html = html:gsub(
+      "<ul([^>]*)>",
+      '<ul%1 style="margin:0; padding-left:1.75em;">'
+    )
+    html = html:gsub(
+      "<ol([^>]*)>",
+      '<ol%1 style="margin:0; padding-left:1.75em;">'
+    )
+  end
+  return html
 end
 
 local function render_email_html(

@@ -108,6 +108,11 @@ class QuartoMailTests(unittest.TestCase):
         self.assertNotIn("<p>", message.body_html)
         self.assertNotIn("mail-signature-separator", message.body_html)
         self.assertIn('<a href="https://example.com">', message.body_html)
+        self.assertIn(
+            '<ol type="1" style="margin:0; padding-left:1.75em;">',
+            message.body_html,
+        )
+        self.assertNotIn("<ol>", message.body_html)
         self.assertIn("--from 'alias@example.com'", message.command)
         self.assertIn("--body-html-file", message.command)
         self.assertIn(f"--attach '{attachment}'", message.command)
