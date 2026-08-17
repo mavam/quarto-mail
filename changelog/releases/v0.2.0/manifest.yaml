@@ -1,0 +1,9 @@
+created: 2026-08-17
+title: Structured message openings
+intro: >-
+  Add structured message openings so greetings can be defined separately from Markdown
+  content, while preserving literal tildes in attachment paths on macOS. This release
+  improves both email authoring and iCloud Drive path rendering.
+source:
+  mode: sync-stable-queue
+  previous_stable: v0.1.2
