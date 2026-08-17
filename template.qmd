@@ -28,6 +28,12 @@ mail:
   # quote: true
 ---
 
+<!--
+Write only the greeting and message content below.
+Do not add a closing, sender name, or signature; the configured metadata above
+appends them automatically.
+-->
+
 Hi Jane,
 
 Write the message body in Markdown.
