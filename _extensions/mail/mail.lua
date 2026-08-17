@@ -447,7 +447,7 @@ local function render_email_html(
     end
     table.insert(sections, '<div class="mail-signature">' .. html .. "</div>")
   end
-  return '<div class="mail-body" style="color:#202124;font-family:Arial,Helvetica,sans-serif;font-size:14px">\n' ..
+  return '<div class="mail-body">\n' ..
     table.concat(sections, "\n<div><br></div>\n") .. "\n</div>\n"
 end
 
