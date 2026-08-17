@@ -1,0 +1,8 @@
+created: 2026-08-17
+title: Preserve primary Gmail sender names
+intro: "Quarto Mail now preserves the authenticated account\u2019s primary Gmail sender\
+  \ name when sending messages. Configured Gmail send-as identities remain in effect\
+  \ for alias senders."
+source:
+  mode: sync-stable-queue
+  previous_stable: v0.1.0
