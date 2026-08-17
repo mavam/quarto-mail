@@ -100,6 +100,7 @@ class QuartoMailTests(unittest.TestCase):
         self.assertIn("Hello,\n\nThe update includes:", message.body_text)
         self.assertIn("\n-- \nAlex Example\nRole\nExample Organization\n", message.body_text)
         self.assertTrue(message.body_html.startswith('<div class="mail-body">\n'))
+        self.assertIn('<div class="mail-opening">Hello,</div>', message.body_html)
         self.assertNotIn("<html", message.body_html)
         self.assertNotIn("<p>", message.body_html)
         self.assertNotIn("mail-signature-separator", message.body_html)

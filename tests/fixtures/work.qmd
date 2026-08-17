@@ -2,6 +2,7 @@
 format: mail-html
 mail:
   sender: work
+  opening: Hello,
   identity: work
   signature: work
   to:
@@ -15,8 +16,6 @@ mail:
   attachments:
     - attachment.txt
 ---
-
-Hello,
 
 The update includes:
 

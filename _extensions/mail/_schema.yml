@@ -22,6 +22,9 @@ formats:
         sender:
           type: string
           description: Named sender profile from mail-profiles.senders.
+        opening:
+          type: string
+          description: Optional greeting placed before the message content.
         identity:
           type: string
           description: Optional sign-off identity appended after the closing when present.

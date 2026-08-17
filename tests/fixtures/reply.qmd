@@ -2,6 +2,7 @@
 format: mail-html
 mail:
   sender: personal
+  opening: Hello,
   identity: personal
   to:
     - Original Sender <sender@example.com>
@@ -12,7 +13,5 @@ mail:
   reply-to-message-id: message-123
   quote: true
 ---
-
-Hello,
 
 Thank you for your message.

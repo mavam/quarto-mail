@@ -414,6 +414,7 @@ end
 
 local function render_email_html(
     message_blocks,
+    opening,
     closing,
     identity,
     identity_indent,
@@ -422,6 +423,12 @@ local function render_email_html(
     signature_html
   )
   local sections = {}
+  if opening ~= nil then
+    table.insert(
+      sections,
+      '<div class="mail-opening">' .. html_escape(opening) .. "</div>"
+    )
+  end
   for _, block in ipairs(message_blocks) do
     local html = render_block_html(block)
     table.insert(sections, html)
@@ -469,6 +476,7 @@ function Pandoc(document)
   local cc = string_list(mail, "cc", false, "mail.cc", mailbox_string)
   local bcc = string_list(mail, "bcc", false, "mail.bcc", mailbox_string)
   local subject = scalar(mail, "subject", false, "mail.subject")
+  local opening = scalar(mail, "opening", false, "mail.opening")
   local closing = scalar(mail, "closing", false, "mail.closing")
   local attachments = string_list(mail, "attachments", false, "mail.attachments")
   local reply_to_message_id = scalar(
@@ -549,6 +557,12 @@ function Pandoc(document)
 
   local message_blocks = document.blocks
   local blocks = {}
+  if opening ~= nil then
+    table.insert(blocks, pandoc.Div(
+      { pandoc.Para(text_inlines(opening)) },
+      pandoc.Attr("", { "mail-opening" })
+    ))
+  end
   for _, block in ipairs(document.blocks) do
     table.insert(blocks, block)
   end
@@ -595,6 +609,7 @@ function Pandoc(document)
   local body_text = pandoc.write(text_document, "plain", { wrap_text = "none" })
   local body_html = render_email_html(
     message_blocks,
+    opening,
     closing,
     resolved_identity,
     identity_indent,

@@ -76,6 +76,7 @@ mv my-mail.qmd hello.qmd
 format: mail-html
 mail:
   sender: personal
+  opening: Hi Jane,
   identity: personal
   closing: Best,
   to:
@@ -86,16 +87,14 @@ mail:
   attachments: []
 ---
 
-Hi Jane,
-
 This is the message body in Markdown.
 ```
 
-Each `.qmd` represents one email. Its Markdown body includes any greeting, so
-messages that don't need one can begin directly with their content. The message
-selects reusable profiles from Quarto's shared metadata, while its complete
-recipient lists remain explicit. Use standard mailbox notation to preserve
-display names, for example,
+Each `.qmd` represents one email. Its optional `opening` supplies a single-line
+greeting before the Markdown body; omit it when the message should begin
+directly with its content. The message selects reusable profiles from Quarto's
+shared metadata, while its complete recipient lists remain explicit. Use
+standard mailbox notation to preserve display names, for example,
 `Recipient Name <recipient@example.com>`.
 
 ### 4. Render and review
@@ -252,9 +251,10 @@ mail:
 ```
 
 The optional identity `indent` sets the number of spaces before the name and
-defaults to `0`. The message-level `closing`, `identity`, and `signature` fields
-compose independently in that order. Omit `closing` to sign with the identity
-alone, or omit `identity` when the message should not add a sign-off name.
+defaults to `0`. The message-level components compose as `opening`, Markdown
+content, `closing`, `identity`, and `signature`. Each component is independent:
+omit `opening` for no greeting, omit `closing` to sign with the identity alone,
+or omit `identity` when the message should not add a sign-off name.
 
 ### Add a signature
 

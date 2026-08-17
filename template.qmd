@@ -3,6 +3,8 @@ format: mail-html
 mail:
   # Sender: personal (user@example.com) or work (alias@example.com).
   sender: personal
+  # Optional greeting before the message content. Delete it to omit the greeting.
+  opening: Hi Jane,
   # Optional sign-off name: personal (Alex), formal (Alex Example), or work
   # (Alex Example). Delete the field to omit the name.
   identity: personal
@@ -29,11 +31,8 @@ mail:
 ---
 
 <!--
-Write only the greeting and message content below.
-Do not add a closing, sender name, or signature; the configured metadata above
-appends them automatically.
+Write only the message content below. Do not add a greeting, closing, sender
+name, or signature; Quarto Mail adds the configured opening and sign-off.
 -->
-
-Hi Jane,
 
 Write the message body in Markdown.
