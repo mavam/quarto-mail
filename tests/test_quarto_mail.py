@@ -104,6 +104,7 @@ class QuartoMailTests(unittest.TestCase):
         self.assertNotIn("<p>", message.body_html)
         self.assertNotIn("mail-signature-separator", message.body_html)
         self.assertIn('<a href="https://example.com">', message.body_html)
+        self.assertIn("--from 'alias@example.com'", message.command)
         self.assertIn("--body-html-file", message.command)
         self.assertIn(f"--attach '{attachment}'", message.command)
 
@@ -113,6 +114,7 @@ class QuartoMailTests(unittest.TestCase):
         self.assertEqual(message.manifest["reply_to_message_id"], "message-123")
         self.assertTrue(message.manifest["quote"])
         self.assertNotIn("--subject", message.command)
+        self.assertNotIn("--from", message.command)
         self.assertIn("--reply-to-message-id 'message-123'", message.command)
         self.assertNotIn("mail-closing", message.body_html)
         self.assertIn('<div class="mail-identity">Alex</div>', message.body_html)

@@ -59,7 +59,9 @@ mail-profiles:
 ```
 
 The `account` must identify an account already authenticated with `gog`. The
-`from` address may be that account or one of its configured aliases.
+`from` address may be that account or one of its configured aliases. When both
+addresses match, Quarto Mail lets `gog` use the account's primary sender name.
+For an alias, Gmail's matching send-as configuration supplies the name.
 
 ### 3. Write your first message
 
@@ -230,9 +232,10 @@ its standard `metadata-files` option. Quarto's normal metadata merging rules
 apply.
 
 A sender controls the authenticated account and the address in the `From`
-header. Keep both values as bare email addresses. `gog` obtains the sender's
-display name from the matching Gmail send-as settings. An identity is the name
-placed directly after the closing:
+header. Keep both values as bare email addresses. When they match, the generated
+command omits `--from`, preserving the primary sender name that plain `gog` uses.
+For a configured alias, the command passes `--from` and Gmail applies that
+alias's send-as name. An identity is the name placed directly after the closing:
 
 ```text
 Best,

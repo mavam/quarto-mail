@@ -46,8 +46,10 @@ end
 local function gog_command(manifest, directory)
   local lines = {
     "gog --account " .. shell_quote(manifest.account) .. " gmail send",
-    "--from " .. shell_quote(manifest.from),
   }
+  if manifest.from ~= manifest.account then
+    table.insert(lines, "--from " .. shell_quote(manifest.from))
+  end
   if manifest.reply_to_message_id ~= nil then
     table.insert(lines, "--reply-to-message-id " .. shell_quote(manifest.reply_to_message_id))
   end
