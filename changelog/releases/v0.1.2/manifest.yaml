@@ -1,0 +1,8 @@
+created: 2026-08-17
+title: Use native email typography
+intro: >-
+  Improve email rendering with native typography so HTML messages look like regular
+  emails across desktop and mobile clients.
+source:
+  mode: sync-stable-queue
+  previous_stable: v0.1.1
