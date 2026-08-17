@@ -268,10 +268,7 @@ end
 
 local function identity_block(name, indent)
   local prefix = string.rep("\u{00a0}", indent)
-  return pandoc.Div(
-    { pandoc.Para(text_inlines(prefix .. name)) },
-    pandoc.Attr("", { "mail-identity" })
-  )
+  return pandoc.Div({ pandoc.Para(text_inlines(prefix .. name)) })
 end
 
 local function signature_block(plain, indent, html)
@@ -289,12 +286,9 @@ local function signature_block(plain, indent, html)
       table.insert(inlines, pandoc.Str(prefix .. line))
       index = index + 1
     end
-    table.insert(blocks, pandoc.Div(
-      { pandoc.Plain(inlines) },
-      pandoc.Attr("", { "mail-signature-plain" })
-    ))
+    table.insert(blocks, pandoc.Div({ pandoc.Plain(inlines) }))
   end
-  return pandoc.Div(blocks, pandoc.Attr("", { "mail-signature" }))
+  return pandoc.Div(blocks)
 end
 
 local function div_has_class(div, class_name)
@@ -425,7 +419,7 @@ local function render_email_html(
   local sections = {}
   if opening ~= nil then
     table.insert(sections, {
-      html = '<div class="mail-opening">' .. html_escape(opening) .. "</div>",
+      html = "<div>" .. html_escape(opening) .. "</div>",
       native_spacing = false,
     })
   end
@@ -437,14 +431,14 @@ local function render_email_html(
   end
   if closing ~= nil then
     table.insert(sections, {
-      html = '<div class="mail-closing">' .. html_escape(closing) .. "</div>",
+      html = "<div>" .. html_escape(closing) .. "</div>",
       native_spacing = false,
     })
   end
   if identity ~= nil then
     table.insert(sections, {
-      html = '<div class="mail-identity">' ..
-        string.rep("&nbsp;", identity_indent) .. html_escape(identity) .. "</div>",
+      html = "<div>" .. string.rep("&nbsp;", identity_indent) ..
+        html_escape(identity) .. "</div>",
       native_spacing = false,
     })
   end
@@ -455,7 +449,7 @@ local function render_email_html(
       html = prefix .. html_escape(signature_plain):gsub("\n", "<br>" .. prefix)
     end
     table.insert(sections, {
-      html = '<div class="mail-signature">' .. html .. "</div>",
+      html = "<div>" .. html .. "</div>",
       native_spacing = false,
     })
   end
@@ -469,8 +463,7 @@ local function render_email_html(
     end
     table.insert(html, section.html)
   end
-  return '<div class="mail-body">\n' ..
-    table.concat(html, "\n") .. "\n</div>\n"
+  return "<div>\n" .. table.concat(html, "\n") .. "\n</div>\n"
 end
 
 function Pandoc(document)
@@ -573,19 +566,13 @@ function Pandoc(document)
   local message_blocks = document.blocks
   local blocks = {}
   if opening ~= nil then
-    table.insert(blocks, pandoc.Div(
-      { pandoc.Para(text_inlines(opening)) },
-      pandoc.Attr("", { "mail-opening" })
-    ))
+    table.insert(blocks, pandoc.Div({ pandoc.Para(text_inlines(opening)) }))
   end
   for _, block in ipairs(document.blocks) do
     table.insert(blocks, block)
   end
   if closing ~= nil then
-    table.insert(blocks, pandoc.Div(
-      { pandoc.Para(text_inlines(closing)) },
-      pandoc.Attr("", { "mail-closing" })
-    ))
+    table.insert(blocks, pandoc.Div({ pandoc.Para(text_inlines(closing)) }))
   end
   if resolved_identity ~= nil then
     table.insert(blocks, identity_block(resolved_identity, identity_indent))
@@ -609,17 +596,24 @@ function Pandoc(document)
     local prefix = string.rep(" ", signature_indent)
     signature_text = prefix .. signature_plain:gsub("\n", "\n" .. prefix)
   end
-  local text_document = document:clone():walk({
+  local text_blocks = {}
+  if opening ~= nil then
+    table.insert(text_blocks, pandoc.Para(text_inlines(opening)))
+  end
+  for _, block in ipairs(message_blocks) do
+    table.insert(text_blocks, block)
+  end
+  if closing ~= nil then
+    table.insert(text_blocks, pandoc.Para(text_inlines(closing)))
+  end
+  if identity_text ~= nil then
+    table.insert(text_blocks, pandoc.RawBlock("plain", identity_text))
+  end
+  if signature_text ~= nil then
+    table.insert(text_blocks, pandoc.RawBlock("plain", "\n-- \n" .. signature_text))
+  end
+  local text_document = pandoc.Pandoc(text_blocks, document.meta):walk({
     Link = link_for_plain_text,
-    Div = function(div)
-      if div_has_class(div, "mail-identity") then
-        return pandoc.RawBlock("plain", identity_text)
-      end
-      if div_has_class(div, "mail-signature") then
-        return pandoc.RawBlock("plain", "\n-- \n" .. signature_text)
-      end
-      return div
-    end,
   })
   local body_text = pandoc.write(text_document, "plain", { wrap_text = "none" })
   local body_html = render_email_html(

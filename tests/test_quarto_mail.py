@@ -102,8 +102,8 @@ class QuartoMailTests(unittest.TestCase):
         self.assertEqual(message.plain_output, message.body_text)
         self.assertIn("Hello,\n\nThe update includes:", message.body_text)
         self.assertIn("\n-- \nAlex Example\nRole\nExample Organization\n", message.body_text)
-        self.assertTrue(message.body_html.startswith('<div class="mail-body">\n'))
-        self.assertIn('<div class="mail-opening">Hello,</div>', message.body_html)
+        self.assertTrue(message.body_html.startswith("<div>\n"))
+        self.assertIn("<div>Hello,</div>", message.body_html)
         self.assertNotIn("<html", message.body_html)
         self.assertNotIn("<p>", message.body_html)
         self.assertNotIn("mail-signature-separator", message.body_html)
@@ -113,14 +113,12 @@ class QuartoMailTests(unittest.TestCase):
             message.body_html,
         )
         self.assertIn(
-            '</ol>\n<div class="mail-closing">Best,</div>',
+            "</ol>\n<div>Best,</div>",
             message.body_html,
         )
         self.assertNotIn("</ol>\n<div><br></div>", message.body_html)
-        body_without_signature = message.body_html.split(
-            '<div class="mail-signature">', 1
-        )[0]
-        self.assertNotIn("style=", body_without_signature)
+        self.assertNotIn("class=", message.body_html)
+        self.assertEqual(message.body_html.count("style="), 1)
         self.assertNotIn("<style", message.preview.read_text(encoding="utf-8"))
         self.assertIn("--from 'alias@example.com'", message.command)
         self.assertIn("--body-html-file", message.command)
@@ -135,7 +133,7 @@ class QuartoMailTests(unittest.TestCase):
         self.assertNotIn("--from", message.command)
         self.assertIn("--reply-to-message-id 'message-123'", message.command)
         self.assertNotIn("mail-closing", message.body_html)
-        self.assertIn('<div class="mail-identity">Alex</div>', message.body_html)
+        self.assertIn("<div>Alex</div>", message.body_html)
         self.assertNotIn("\nBest,\n", message.body_text)
         self.assertTrue(message.body_text.endswith("\nAlex\n"))
 

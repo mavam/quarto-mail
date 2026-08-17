@@ -6,4 +6,4 @@ authors:
 created: 2026-08-17T19:28:03.708221Z
 ---
 
-HTML message bodies now leave fonts, colors, spacing, and list presentation to the recipient's mail client. Quarto Mail no longer injects CSS or inline styles outside explicitly configured rich signatures.
+HTML message bodies now use the recipient's mail client's native typography, colors, and list presentation. Quarto Mail adds no CSS or inline styles outside explicitly configured rich signatures, and avoids inserting extra blank lines around lists.
