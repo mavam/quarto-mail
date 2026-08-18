@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
-"""Build quarto-mail's deterministic MIME artifact from a rendered bundle."""
+"""Build deterministic MIME artifacts and prepare Gmail API replies."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import json
+import os
+import re
+import shlex
 import sys
+import tempfile
 from email.message import EmailMessage
-from email.policy import SMTP
+from email.parser import BytesParser
+from email.policy import SMTP, default
 from email.utils import formataddr, formatdate
+from html.parser import HTMLParser
 from pathlib import Path
+from typing import Any
 
 
 CONTENT_TYPES = {
@@ -31,22 +39,102 @@ CONTENT_TYPES = {
     ".xml": "application/xml",
     ".zip": "application/zip",
 }
+FINAL_ARTIFACTS = ("message.eml", "gmail-request.json", "reply.json")
+MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]+>")
+
+
+class HTMLTextExtractor(HTMLParser):
+    """Extract readable plain text from an HTML body without dependencies."""
+
+    BREAK_TAGS = {"br", "div", "li", "p", "tr"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in self.BREAK_TAGS and self.parts and not self.parts[-1].endswith("\n"):
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in self.BREAK_TAGS and self.parts and not self.parts[-1].endswith("\n"):
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+    def text(self) -> str:
+        value = "".join(self.parts).replace("\r\n", "\n").replace("\r", "\n")
+        value = re.sub(r"[ \t]+\n", "\n", value)
+        value = re.sub(r"\n{3,}", "\n\n", value)
+        return value.strip("\n")
+
+
+def decode_base64url(value: str) -> bytes:
+    try:
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except Exception as error:
+        raise ValueError("the Gmail response contains invalid base64url data") from error
+
+
+def encode_base64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def read_manifest(bundle: Path) -> dict[str, Any]:
+    try:
+        return json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise ValueError(f"missing rendered manifest: {bundle / 'manifest.json'}") from error
+    except json.JSONDecodeError as error:
+        raise ValueError(f"invalid rendered manifest: {error}") from error
+
+
+def update_digest(digest: Any, label: str, value: bytes) -> None:
+    digest.update(label.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(len(value).to_bytes(8, "big"))
+    digest.update(value)
+
+
+def local_digest(bundle: Path, manifest: dict[str, Any]) -> str:
+    digest = hashlib.sha256()
+    manifest_bytes = (bundle / "manifest.json").read_bytes()
+    update_digest(digest, "manifest", manifest_bytes)
+    for key in ("body_text", "body_html"):
+        path = bundle / manifest[key]
+        update_digest(digest, key, path.read_bytes())
+    source = Path(manifest["source"])
+    update_digest(digest, "source", source.read_bytes())
+    update_digest(digest, "source-mtime-ns", str(source.stat().st_mtime_ns).encode("ascii"))
+    for index, path_value in enumerate(manifest["attachments"]):
+        update_digest(digest, f"attachment-{index}", Path(path_value).read_bytes())
+    for index, image in enumerate(manifest["inline_images"]):
+        update_digest(digest, f"inline-image-{index}", Path(image["source"]).read_bytes())
+    return digest.hexdigest()
 
 
 def stable_leaf_bytes(message: EmailMessage) -> list[bytes]:
     return [part.as_bytes(policy=SMTP) for part in message.walk() if not part.is_multipart()]
 
 
-def content_digest(message: EmailMessage) -> str:
+def content_digest(message: EmailMessage, thread_id: str | None) -> str:
     digest = hashlib.sha256()
-    for name in ("From", "To", "Cc", "Bcc", "Subject", "Date"):
-        digest.update(name.encode("ascii"))
-        digest.update(b":")
-        digest.update(str(message.get(name, "")).encode("utf-8"))
-        digest.update(b"\0")
-    for leaf in stable_leaf_bytes(message):
-        digest.update(len(leaf).to_bytes(8, "big"))
-        digest.update(leaf)
+    for name in (
+        "From",
+        "To",
+        "Cc",
+        "Bcc",
+        "Subject",
+        "Date",
+        "In-Reply-To",
+        "References",
+    ):
+        update_digest(digest, name, str(message.get(name, "")).encode("utf-8"))
+    if thread_id is not None:
+        update_digest(digest, "threadId", thread_id.encode("utf-8"))
+    for index, leaf in enumerate(stable_leaf_bytes(message)):
+        update_digest(digest, f"leaf-{index}", leaf)
     return digest.hexdigest()
 
 
@@ -71,8 +159,146 @@ def set_boundaries(message: EmailMessage, seed: str) -> None:
             salt += 1
 
 
-def build(bundle: Path) -> bytes:
-    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+def normalize_text(value: str) -> str:
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def html_to_text(value: str) -> str:
+    parser = HTMLTextExtractor()
+    parser.feed(value)
+    parser.close()
+    return parser.text()
+
+
+def html_fragment(value: str) -> str:
+    match = re.search(r"<body\b[^>]*>(.*)</body\s*>", value, re.IGNORECASE | re.DOTALL)
+    return (match.group(1) if match else value).strip()
+
+
+def plain_to_html(value: str) -> str:
+    escaped = html.escape(normalize_text(value).strip("\n"))
+    return escaped.replace("\n", "<br>\n")
+
+
+def body_content(message: EmailMessage, subtype: str) -> str | None:
+    part = message.get_body(preferencelist=(subtype,))
+    if part is None:
+        if message.get_content_maintype() == "text" and message.get_content_subtype() == subtype:
+            part = message
+        else:
+            return None
+    try:
+        content = part.get_content()
+    except (LookupError, UnicodeError) as error:
+        raise ValueError(f"cannot decode the original {subtype} body: {error}") from error
+    if not isinstance(content, str):
+        return None
+    return normalize_text(content)
+
+
+def reply_subject(subject: str | None) -> str:
+    original = subject or ""
+    if re.match(r"^\s*re\s*:", original, re.IGNORECASE):
+        return original
+    return f"Re: {original}".rstrip()
+
+
+def reply_context(response: dict[str, Any]) -> dict[str, Any]:
+    if "raw" not in response and isinstance(response.get("result"), dict):
+        response = response["result"]
+    raw_value = response.get("raw")
+    thread_id = response.get("threadId")
+    if not isinstance(raw_value, str) or raw_value == "":
+        raise ValueError("the Gmail response is missing a raw RFC message")
+    if not isinstance(thread_id, str) or thread_id == "":
+        raise ValueError("the Gmail response is missing threadId")
+    original = BytesParser(policy=default).parsebytes(decode_base64url(raw_value))
+    message_id_header = str(original.get("Message-ID", ""))
+    match = MESSAGE_ID_PATTERN.search(message_id_header)
+    if match is None:
+        raise ValueError("the original message is missing a valid RFC Message-ID header")
+    message_id = match.group(0)
+    reference_ids: list[str] = []
+    for value in original.get_all("References", []):
+        for reference in MESSAGE_ID_PATTERN.findall(str(value)):
+            if reference not in reference_ids:
+                reference_ids.append(reference)
+    if message_id not in reference_ids:
+        reference_ids.append(message_id)
+    original_plain = body_content(original, "plain")
+    original_html = body_content(original, "html")
+    if original_plain is None and original_html is None:
+        raise ValueError("the original message has no readable plain-text or HTML body")
+    if original_plain is None:
+        original_plain = html_to_text(original_html or "")
+    quoted_inline_images: list[dict[str, Any]] = []
+    if original_html is None:
+        original_html = plain_to_html(original_plain)
+    else:
+        original_html = html_fragment(original_html)
+        for part in original.walk():
+            content_id_header = part.get("Content-ID")
+            if content_id_header is None or part.is_multipart():
+                continue
+            content_id = str(content_id_header).strip().strip("<>")
+            if not re.search(rf"cid:{re.escape(content_id)}", original_html, re.IGNORECASE):
+                continue
+            payload = part.get_payload(decode=True)
+            if payload is None:
+                continue
+            suffix = hashlib.sha256(content_id.encode("utf-8") + b"\0" + payload).hexdigest()[:16]
+            rewritten_content_id = (
+                f"quoted-{len(quoted_inline_images) + 1}-{suffix}@quarto-mail"
+            )
+            original_html = re.sub(
+                rf"cid:{re.escape(content_id)}",
+                f"cid:{rewritten_content_id}",
+                original_html,
+                flags=re.IGNORECASE,
+            )
+            quoted_inline_images.append({
+                "content_id": rewritten_content_id,
+                "content_type": part.get_content_type(),
+                "filename": part.get_filename(),
+                "payload": payload,
+            })
+    return {
+        "gmail_message_id": response.get("id"),
+        "thread_id": thread_id,
+        "message_id": message_id,
+        "references": reference_ids,
+        "from": str(original.get("From", "")),
+        "date": str(original.get("Date", "")),
+        "subject": str(original.get("Subject", "")),
+        "plain": original_plain.strip("\n"),
+        "html": original_html,
+        "inline_images": quoted_inline_images,
+    }
+
+
+def quote_bodies(plain: str, html_body: str, context: dict[str, Any]) -> tuple[str, str]:
+    attribution = f"On {context['date']}, {context['from']} wrote:"
+    quoted_plain = "\n".join(
+        ">" if line == "" else f"> {line}" for line in context["plain"].split("\n")
+    )
+    plain = plain.rstrip("\n") + "\n\n" + attribution + "\n" + quoted_plain + "\n"
+    attribution_html = html.escape(attribution)
+    quoted_html = (
+        '<div class="gmail_quote">'
+        f'<div dir="ltr" class="gmail_attr">{attribution_html}<br></div>'
+        '<blockquote class="gmail_quote" '
+        'style="margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex">'
+        f"{context['html']}</blockquote></div>"
+    )
+    html_body = html_body.rstrip() + "\n" + quoted_html + "\n"
+    return plain, html_body
+
+
+def build_message(
+    bundle: Path,
+    manifest: dict[str, Any],
+    context: dict[str, Any] | None,
+) -> tuple[bytes, dict[str, str], dict[str, Any] | None]:
     message = EmailMessage(policy=SMTP)
     message["From"] = formataddr((manifest.get("from_name") or "", manifest["from"]))
     message["To"] = ", ".join(manifest["to"])
@@ -80,14 +306,40 @@ def build(bundle: Path) -> bytes:
         message["Cc"] = ", ".join(manifest["cc"])
     if manifest["bcc"]:
         message["Bcc"] = ", ".join(manifest["bcc"])
-    if manifest["subject"] is not None:
-        message["Subject"] = manifest["subject"]
-    message["Date"] = formatdate(Path(manifest["source"]).stat().st_mtime, usegmt=True)
+
+    thread_id: str | None = None
+    reply_metadata: dict[str, Any] | None = None
+    if manifest.get("reply_to_message_id") is not None:
+        if context is None:
+            raise ValueError("reply preparation requires a Gmail API response")
+        if context.get("gmail_message_id") not in (None, manifest["reply_to_message_id"]):
+            raise ValueError("the Gmail response does not match mail.reply-to-message-id")
+        thread_id = context["thread_id"]
+        message["In-Reply-To"] = context["message_id"]
+        message["References"] = " ".join(context["references"])
+        subject = manifest["subject"] if manifest["subject"] is not None else reply_subject(context["subject"])
+        reply_metadata = {
+            "gmail_message_id": manifest["reply_to_message_id"],
+            "thread_id": thread_id,
+            "message_id": context["message_id"],
+            "references": context["references"],
+            "from": context["from"],
+            "date": context["date"],
+            "subject": context["subject"],
+        }
+    else:
+        subject = manifest["subject"]
+    message["Subject"] = subject
+    source = Path(manifest["source"])
+    message["Date"] = formatdate(source.stat().st_mtime, usegmt=True)
 
     plain = (bundle / manifest["body_text"]).read_text(encoding="utf-8")
-    html = (bundle / manifest["body_html"]).read_text(encoding="utf-8")
+    html_body = (bundle / manifest["body_html"]).read_text(encoding="utf-8")
+    if context is not None and manifest["quote"]:
+        plain, html_body = quote_bodies(plain, html_body, context)
+
     message.set_content(plain, charset="utf-8")
-    message.add_alternative(html, subtype="html", charset="utf-8")
+    message.add_alternative(html_body, subtype="html", charset="utf-8")
     html_part = message.get_payload()[-1]
 
     for image in manifest["inline_images"]:
@@ -100,9 +352,21 @@ def build(bundle: Path) -> bytes:
             filename=image["filename"],
             disposition="inline",
         )
+    if context is not None and manifest["quote"]:
+        for image in context["inline_images"]:
+            maintype, subtype = image["content_type"].split("/", 1)
+            options: dict[str, Any] = {
+                "maintype": maintype,
+                "subtype": subtype,
+                "cid": f"<{image['content_id']}>",
+                "disposition": "inline",
+            }
+            if image["filename"] is not None:
+                options["filename"] = image["filename"]
+            html_part.add_related(image["payload"], **options)
 
-    for source in manifest["attachments"]:
-        path = Path(source)
+    for source_value in manifest["attachments"]:
+        path = Path(source_value)
         content_type = CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
         maintype, subtype = content_type.split("/", 1)
         message.add_attachment(
@@ -113,23 +377,141 @@ def build(bundle: Path) -> bytes:
             disposition="attachment",
         )
 
-    digest = content_digest(message)
+    digest = content_digest(message, thread_id)
     message["Message-ID"] = f"<{digest}@quarto-mail>"
     set_boundaries(message, digest)
-    return message.as_bytes(policy=SMTP)
+    raw = message.as_bytes(policy=SMTP)
+    request = {"raw": encode_base64url(raw)}
+    if thread_id is not None:
+        request["threadId"] = thread_id
+    return raw, request, reply_metadata
+
+
+def remove_artifacts(bundle: Path) -> None:
+    for name in FINAL_ARTIFACTS:
+        (bundle / name).unlink(missing_ok=True)
+
+
+def atomic_write(path: Path, value: bytes, mode: int | None = None) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(value)
+        if mode is not None:
+            temporary.chmod(mode)
+        temporary.replace(path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def write_final_artifacts(
+    bundle: Path,
+    raw: bytes,
+    request: dict[str, str],
+    reply_metadata: dict[str, Any] | None,
+    digest: str,
+) -> None:
+    atomic_write(bundle / "message.eml", raw)
+    atomic_write(
+        bundle / "gmail-request.json",
+        (json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"),
+    )
+    if reply_metadata is not None:
+        reply_metadata = {"render_digest": digest, **reply_metadata}
+        atomic_write(
+            bundle / "reply.json",
+            (json.dumps(reply_metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        )
+
+
+def prepared_reply_is_current(bundle: Path, digest: str) -> bool:
+    try:
+        state = json.loads((bundle / "reply.json").read_text(encoding="utf-8"))
+        raw = (bundle / "message.eml").read_bytes()
+        request = json.loads((bundle / "gmail-request.json").read_text(encoding="utf-8"))
+        return (
+            state.get("render_digest") == digest
+            and request.get("threadId") == state.get("thread_id")
+            and decode_base64url(request["raw"]) == raw
+        )
+    except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def prepare_script(bundle: Path, manifest: dict[str, Any]) -> bytes:
+    params = json.dumps(
+        {
+            "userId": "me",
+            "id": manifest["reply_to_message_id"],
+            "format": "raw",
+        },
+        separators=(",", ":"),
+    )
+    script = Path(__file__).resolve()
+    lines = [
+        "#!/bin/sh",
+        "set -eu",
+        f"bundle={shlex.quote(str(bundle.resolve()))}",
+        'response=$(mktemp "${TMPDIR:-/tmp}/quarto-mail-reply.XXXXXX")',
+        "trap 'rm -f \"$response\"' EXIT HUP INT TERM",
+        f"gog --readonly --account {shlex.quote(manifest['account'])} api call gmail v1 gmail.users.messages.get \\",
+        f"  --params {shlex.quote(params)} \\",
+        '  --no-input > "$response"',
+        f"python3 {shlex.quote(str(script))} prepare \"$bundle\" \"$response\"",
+        "",
+    ]
+    return "\n".join(lines).encode("utf-8")
+
+
+def render(bundle: Path) -> None:
+    manifest = read_manifest(bundle)
+    digest = local_digest(bundle, manifest)
+    preparation = bundle / "prepare.sh"
+    if manifest.get("reply_to_message_id") is not None:
+        if not prepared_reply_is_current(bundle, digest):
+            remove_artifacts(bundle)
+        atomic_write(preparation, prepare_script(bundle, manifest), mode=0o755)
+        return
+    preparation.unlink(missing_ok=True)
+    remove_artifacts(bundle)
+    raw, request, _reply_metadata = build_message(bundle, manifest, None)
+    write_final_artifacts(bundle, raw, request, None, digest)
+
+
+def prepare(bundle: Path, response_path: Path) -> None:
+    manifest = read_manifest(bundle)
+    if manifest.get("reply_to_message_id") is None:
+        raise ValueError("preparation is only required for replies")
+    digest = local_digest(bundle, manifest)
+    remove_artifacts(bundle)
+    try:
+        response = json.loads(response_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"invalid Gmail API response: {error}") from error
+    context = reply_context(response)
+    raw, request, reply_metadata = build_message(bundle, manifest, context)
+    write_final_artifacts(bundle, raw, request, reply_metadata, digest)
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: mime.py BUNDLE_DIRECTORY")
-    bundle = Path(sys.argv[1])
-    raw = build(bundle)
-    (bundle / "message.eml").write_bytes(raw)
-    encoded = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-    (bundle / "gmail-request.json").write_text(
-        json.dumps({"raw": encoded}, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-    )
+    if len(sys.argv) < 3 or sys.argv[1] not in {"render", "prepare"}:
+        raise SystemExit("usage: mime.py render BUNDLE_DIRECTORY | mime.py prepare BUNDLE_DIRECTORY RESPONSE_JSON")
+    action = sys.argv[1]
+    bundle = Path(sys.argv[2])
+    try:
+        if action == "render" and len(sys.argv) == 3:
+            render(bundle)
+        elif action == "prepare" and len(sys.argv) == 4:
+            prepare(bundle, Path(sys.argv[3]))
+        else:
+            raise ValueError("invalid arguments")
+    except Exception as error:
+        remove_artifacts(bundle)
+        if action == "render":
+            (bundle / "prepare.sh").unlink(missing_ok=True)
+        raise SystemExit(f"quarto-mail: {error}") from error
 
 
 if __name__ == "__main__":

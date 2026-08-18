@@ -8,10 +8,14 @@ mail:
     - Original Sender <sender@example.com>
   cc:
     - Other Participant <participant@example.com>
-  bcc: []
-  attachments: []
+  bcc:
+    - Archive Example <archive@example.com>
+  attachments:
+    - attachment~path~.txt
   reply-to-message-id: message-123
   quote: true
 ---
 
 Thank you for your message.
+
+![Reply diagram](inline.png)

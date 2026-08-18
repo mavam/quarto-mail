@@ -735,29 +735,35 @@ function Pandoc(document)
   write_file(pandoc.path.join({ bundle_directory, "manifest.json" }), manifest_json(values))
   local eml_path = pandoc.path.join({ bundle_directory, "message.eml" })
   local gmail_request_path = pandoc.path.join({ bundle_directory, "gmail-request.json" })
-  os.remove(eml_path)
-  os.remove(gmail_request_path)
-  if reply_to_message_id == nil then
-    local script_directory = pandoc.path.directory(PANDOC_SCRIPT_FILE)
-    local ok, code, _output, error_output = pcall(
-      pandoc.system.command,
-      "python3",
-      { pandoc.path.join({ script_directory, "mime.py" }), bundle_directory }
-    )
-    if not ok then
-      os.remove(eml_path)
-      os.remove(gmail_request_path)
-      fail("cannot run Python 3 MIME builder: " .. tostring(code))
+  local reply_path = pandoc.path.join({ bundle_directory, "reply.json" })
+  local preparation_path = pandoc.path.join({ bundle_directory, "prepare.sh" })
+  local script_directory = pandoc.path.directory(PANDOC_SCRIPT_FILE)
+  local ok, code, _output, error_output = pcall(
+    pandoc.system.command,
+    "python3",
+    {
+      pandoc.path.join({ script_directory, "mime.py" }),
+      "render",
+      bundle_directory,
+    }
+  )
+  if not ok then
+    os.remove(eml_path)
+    os.remove(gmail_request_path)
+    os.remove(reply_path)
+    os.remove(preparation_path)
+    fail("cannot run Python 3 MIME builder: " .. tostring(code))
+  end
+  if code ~= false and code ~= 0 then
+    os.remove(eml_path)
+    os.remove(gmail_request_path)
+    os.remove(reply_path)
+    os.remove(preparation_path)
+    local detail = error_output ~= nil and error_output:gsub("%s+$", "") or ""
+    if detail == "" then
+      detail = "exit status " .. tostring(code)
     end
-    if code ~= false and code ~= 0 then
-      os.remove(eml_path)
-      os.remove(gmail_request_path)
-      local detail = error_output ~= nil and error_output:gsub("%s+$", "") or ""
-      if detail == "" then
-        detail = "exit status " .. tostring(code)
-      end
-      fail("MIME builder failed: " .. detail)
-    end
+    fail("MIME builder failed: " .. detail)
   end
 
   return document

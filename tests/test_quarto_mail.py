@@ -11,10 +11,12 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from typing import Callable
 
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
+GMAIL_RESPONSE = FIXTURES / "gmail-message.json"
 
 
 def run_quarto(
@@ -32,8 +34,16 @@ def run_quarto(
     )
 
 
+def parse_message(raw: bytes):
+    return BytesParser(policy=policy.default).parsebytes(raw)
+
+
 class RenderedMessage:
-    def __init__(self, name: str):
+    def __init__(
+        self,
+        name: str,
+        transform: Callable[[str], str] | None = None,
+    ):
         self.source = ROOT / f".quarto-mail-test-{uuid.uuid4()}.qmd"
         source = (FIXTURES / f"{name}.qmd").read_text(encoding="utf-8")
         source = source.replace(
@@ -43,6 +53,8 @@ class RenderedMessage:
             "](inline.png)",
             "](tests/fixtures/inline.png)",
         )
+        if transform is not None:
+            source = transform(source)
         self.source.write_text(source, encoding="utf-8")
         self.bundle = self.source.with_suffix(".mail")
         self.preview = self.source.with_suffix(".html")
@@ -57,9 +69,7 @@ class RenderedMessage:
             self.cleanup()
             raise AssertionError(result.stderr)
         self.plain_output = result.stdout
-
-        format_name = "mail-gog" if name == "reply" else "mail-gmail"
-        result = run_quarto(str(self.source), "--to", format_name, "--output", "-")
+        result = run_quarto(str(self.source), "--to", "mail-gog", "--output", "-")
         if result.returncode != 0:
             self.cleanup()
             raise AssertionError(result.stderr)
@@ -81,6 +91,10 @@ class RenderedMessage:
     def eml(self) -> bytes:
         return (self.bundle / "message.eml").read_bytes()
 
+    @property
+    def request(self) -> dict[str, str]:
+        return json.loads((self.bundle / "gmail-request.json").read_text(encoding="utf-8"))
+
     def cleanup(self) -> None:
         self.source.unlink(missing_ok=True)
         self.preview.unlink(missing_ok=True)
@@ -96,10 +110,36 @@ class QuartoMailTests(unittest.TestCase):
         for message in self.rendered:
             message.cleanup()
 
-    def render(self, name: str) -> RenderedMessage:
-        message = RenderedMessage(name)
+    def render(
+        self,
+        name: str,
+        transform: Callable[[str], str] | None = None,
+    ) -> RenderedMessage:
+        message = RenderedMessage(name, transform)
         self.rendered.append(message)
         return message
+
+    def fake_gog(self) -> tuple[dict[str, str], Path]:
+        directory = Path(tempfile.mkdtemp(prefix="quarto-mail-gog-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        log = directory / "calls.log"
+        fake = directory / "gog"
+        fake.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' \"$*\" >> \"$FAKE_GOG_LOG\"\n"
+            "case \"$*\" in\n"
+            "  *gmail.users.messages.get*) cat \"$FAKE_GMAIL_RESPONSE\" ;;\n"
+            "  *gmail.users.messages.send*) printf '{\"id\":\"sent-once\"}\\n' ;;\n"
+            "  *) printf 'unexpected gog call\\n' >&2; exit 2 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+        environment = os.environ.copy()
+        environment["PATH"] = f"{directory}:{environment['PATH']}"
+        environment["FAKE_GOG_LOG"] = str(log)
+        environment["FAKE_GMAIL_RESPONSE"] = str(GMAIL_RESPONSE)
+        return environment, log
 
     def test_renders_a_complete_message(self) -> None:
         message = self.render("work")
@@ -112,10 +152,7 @@ class QuartoMailTests(unittest.TestCase):
         self.assertEqual(manifest["account"], "work@example.com")
         self.assertEqual(manifest["from"], "alias@example.com")
         self.assertEqual(manifest["from_name"], "Alex Example")
-        self.assertEqual(
-            manifest["to"],
-            ["Customer Example <customer@example.com>"],
-        )
+        self.assertEqual(manifest["to"], ["Customer Example <customer@example.com>"])
         self.assertEqual(manifest["attachments"], [attachment])
         self.assertEqual(
             manifest["inline_images"],
@@ -139,23 +176,26 @@ class QuartoMailTests(unittest.TestCase):
         self.assertIn('<a href="https://example.com">', message.body_html)
         self.assertIn('<div>The update includes:</div>', message.body_html)
         self.assertIn('<ol type="1">', message.body_html)
-        self.assertIn(
-            "</ol>\n<div>Best,</div>",
-            message.body_html,
-        )
+        self.assertIn("</ol>\n<div>Best,</div>", message.body_html)
         self.assertNotIn("</ol>\n<div><br></div>", message.body_html)
         self.assertNotIn("class=", message.body_html)
         self.assertEqual(message.body_html.count("style="), 1)
         preview = message.preview.read_text(encoding="utf-8")
         self.assertNotIn("<style", preview)
         self.assertIn("tests/fixtures/inline.png", preview)
+
         self.assertIn("gmail.users.messages.send", message.command)
         self.assertIn("gmail-request.json", message.command)
-
+        self.assertNotIn("gmail" + " send", message.command)
+        self.assertFalse((message.bundle / "prepare.sh").exists())
         self.assertNotIn(b"\n", message.eml.replace(b"\r\n", b""))
-        parsed = BytesParser(policy=policy.default).parsebytes(message.eml)
+
+        parsed = parse_message(message.eml)
         self.assertEqual(parsed["Subject"], "Project üpdate")
         self.assertEqual(parsed["From"], "Alex Example <alias@example.com>")
+        self.assertEqual(parsed["To"], "Customer Example <customer@example.com>")
+        self.assertEqual(parsed["Cc"], "Colleague Example <colleague@example.com>")
+        self.assertEqual(parsed["Bcc"], "Archive Example <archive@example.com>")
         self.assertIsNotNone(parsed["Date"])
         self.assertRegex(parsed["Message-ID"], r"^<[0-9a-f]{64}@quarto-mail>$")
         self.assertEqual(parsed.get_content_type(), "multipart/mixed")
@@ -164,25 +204,21 @@ class QuartoMailTests(unittest.TestCase):
         plain, related = alternative.get_payload()
         self.assertEqual(plain.get_content().replace("\r\n", "\n"), message.body_text)
         self.assertEqual(related.get_content_type(), "multipart/related")
-        html, inline = related.get_payload()
-        self.assertEqual(html.get_content().replace("\r\n", "\n"), message.body_html)
-        self.assertIn("cid:image-1@quarto-mail", html.get_content())
-        self.assertIn("https://example.com/logo.png", html.get_content())
+        html_part, inline = related.get_payload()
+        self.assertEqual(html_part.get_content().replace("\r\n", "\n"), message.body_html)
+        self.assertIn("cid:image-1@quarto-mail", html_part.get_content())
+        self.assertIn("https://example.com/logo.png", html_part.get_content())
         self.assertEqual(inline["Content-ID"], "<image-1@quarto-mail>")
         self.assertEqual(inline.get_content_disposition(), "inline")
         self.assertEqual(inline.get_payload(decode=True), image_path.read_bytes())
         self.assertEqual(attached.get_filename(), attachment_path.name)
         self.assertEqual(attached.get_content_disposition(), "attachment")
         self.assertEqual(attached.get_payload(decode=True), attachment_path.read_bytes())
-        self.assertNotIn("class=", html.get_content())
-        self.assertNotIn("<style", html.get_content())
 
-        request = json.loads(
-            (message.bundle / "gmail-request.json").read_text(encoding="utf-8")
-        )
-        encoded = request["raw"]
+        encoded = message.request["raw"]
         decoded = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
         self.assertEqual(decoded, message.eml)
+        self.assertNotIn("threadId", message.request)
 
         result = run_quarto(str(message.source), "--to", "mail-eml", "--output", "-")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -190,31 +226,17 @@ class QuartoMailTests(unittest.TestCase):
             result.stdout.replace("\n", "\r\n").encode().rstrip(b"\r\n"),
             message.eml.rstrip(b"\r\n"),
         )
-
         first_eml = message.eml
+        first_request = (message.bundle / "gmail-request.json").read_bytes()
         result = run_quarto(str(message.source), "--quiet")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(message.eml, first_eml)
+        self.assertEqual((message.bundle / "gmail-request.json").read_bytes(), first_request)
 
-        result = run_quarto(str(message.source), "--to", "mail-gog", "--output", "-")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("mail-gog does not support local inline images", result.stderr)
-
-        no_inline = message.source.with_name(f"{message.source.stem}-gog.qmd")
-        self.addCleanup(no_inline.unlink, missing_ok=True)
-        no_inline.write_text(
-            message.source.read_text(encoding="utf-8").replace(
-                "![Pipeline diagram](tests/fixtures/inline.png)\n\n", ""
-            ),
-            encoding="utf-8",
-        )
-        no_inline_bundle = no_inline.with_suffix(".mail")
-        self.addCleanup(shutil.rmtree, no_inline_bundle, True)
-        result = run_quarto(str(no_inline), "--to", "mail-gog", "--output", "-")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--from 'alias@example.com'", result.stdout)
-        self.assertIn("--body-html-file", result.stdout)
-        self.assertIn(f"--attach '{attachment}'", result.stdout)
+        source_files = list((ROOT / "_extensions" / "mail").glob("*")) + [ROOT / "README.md"]
+        for path in source_files:
+            if path.is_file():
+                self.assertNotIn("gog gmail" + " send", path.read_text(encoding="utf-8"))
 
         fake_bin = Path(tempfile.mkdtemp(prefix="quarto-mail-python-"))
         self.addCleanup(shutil.rmtree, fake_bin, True)
@@ -229,42 +251,145 @@ class QuartoMailTests(unittest.TestCase):
         self.assertFalse((message.bundle / "message.eml").exists())
         self.assertFalse((message.bundle / "gmail-request.json").exists())
 
-    def test_renders_and_executes_a_reply_command_once(self) -> None:
+    def test_prepares_and_sends_raw_replies(self) -> None:
         message = self.render("reply")
+        image_path = FIXTURES / "inline.png"
+        attachment_path = FIXTURES / "attachment~path~.txt"
         self.assertIsNone(message.manifest["subject"])
         self.assertEqual(message.manifest["reply_to_message_id"], "message-123")
         self.assertTrue(message.manifest["quote"])
-        self.assertNotIn("--subject", message.command)
-        self.assertNotIn("--from", message.command)
-        self.assertIn("--reply-to-message-id 'message-123'", message.command)
-        self.assertNotIn("mail-closing", message.body_html)
-        self.assertIn("<div>Alex</div>", message.body_html)
-        self.assertNotIn("\nBest,\n", message.body_text)
-        self.assertTrue(message.body_text.endswith("\nAlex\n"))
+        self.assertIn("gmail.users.messages.send", message.command)
+        self.assertNotIn("gmail" + " send", message.command)
+        self.assertIn("gmail-request.json", message.command)
         self.assertFalse((message.bundle / "message.eml").exists())
         self.assertFalse((message.bundle / "gmail-request.json").exists())
-        result = run_quarto(str(message.source), "--to", "mail-eml", "--output", "-")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("mail-eml does not support replies; use mail-gog", result.stderr)
-        result = run_quarto(
-            str(message.source), "--to", "mail-gmail", "--output", "-"
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("mail-gmail does not support replies; use mail-gog", result.stderr)
+        preparation = message.bundle / "prepare.sh"
+        self.assertTrue(preparation.is_file())
+        preparation_text = preparation.read_text(encoding="utf-8")
+        self.assertIn("gmail.users.messages.get", preparation_text)
+        self.assertIn('"format":"raw"', preparation_text)
+        self.assertNotIn("gmail.users.messages.send", preparation_text)
+        self.assertNotIn("--allow-write", preparation_text)
 
-        directory = Path(tempfile.mkdtemp(prefix="quarto-mail-gog-"))
-        self.addCleanup(shutil.rmtree, directory, True)
-        log = directory / "calls.log"
-        fake = directory / "gog"
-        fake.write_text(
-            "#!/bin/sh\nprintf 'call\\n' >> \"$FAKE_GOG_LOG\"\n"
-            "printf '{\"id\":\"fake\"}\\n'\n",
-            encoding="utf-8",
+        environment, log = self.fake_gog()
+        result = subprocess.run(
+            ["/bin/sh", "-c", message.command],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        fake.chmod(0o755)
-        environment = os.environ.copy()
-        environment["PATH"] = f"{directory}:{environment['PATH']}"
-        environment["FAKE_GOG_LOG"] = str(log)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("reply artifacts are not prepared", result.stderr)
+        self.assertFalse(log.exists())
+
+        result = subprocess.run(
+            ["/bin/sh", str(preparation)],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls_before_send = log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(calls_before_send), 1)
+        self.assertIn("gmail.users.messages.get", calls_before_send[0])
+        self.assertNotIn("gmail.users.messages.send", "\n".join(calls_before_send))
+
+        first_eml = message.eml
+        first_request = (message.bundle / "gmail-request.json").read_bytes()
+        first_reply = (message.bundle / "reply.json").read_bytes()
+        parsed = parse_message(first_eml)
+        self.assertEqual(parsed["Subject"], "Re: Original üpdate")
+        self.assertEqual(parsed["In-Reply-To"], "<original-123@example.com>")
+        self.assertEqual(
+            parsed["References"],
+            "<root@example.com> <previous@example.com> <original-123@example.com>",
+        )
+        self.assertEqual(parsed["To"], "Original Sender <sender@example.com>")
+        self.assertEqual(parsed["Cc"], "Other Participant <participant@example.com>")
+        self.assertEqual(parsed["Bcc"], "Archive Example <archive@example.com>")
+        self.assertEqual(parsed.get_content_type(), "multipart/mixed")
+        alternative, attached = parsed.get_payload()
+        plain, related = alternative.get_payload()
+        html_part, inline, quoted_inline = related.get_payload()
+        plain_content = plain.get_content().replace("\r\n", "\n")
+        html_content = html_part.get_content().replace("\r\n", "\n")
+        self.assertIn("Thank you for your message.", plain_content)
+        self.assertIn("On Tue, 12 Aug 2025 10:30:00 +0200, Sender Ü", plain_content)
+        self.assertIn("> Original plain body.\n> Second line.", plain_content)
+        self.assertIn('class="gmail_quote"', html_content)
+        self.assertIn("Original <strong>HTML</strong> body.", html_content)
+        self.assertIn("cid:quoted-1-", html_content)
+        self.assertEqual(inline["Content-ID"], "<image-1@quarto-mail>")
+        self.assertEqual(inline.get_payload(decode=True), image_path.read_bytes())
+        self.assertRegex(quoted_inline["Content-ID"], r"^<quoted-1-[0-9a-f]{16}@quarto-mail>$")
+        self.assertEqual(quoted_inline.get_filename(), "original-inline.png")
+        self.assertEqual(quoted_inline.get_payload(decode=True), image_path.read_bytes())
+        self.assertEqual(attached.get_payload(decode=True), attachment_path.read_bytes())
+        self.assertEqual(message.request["threadId"], "thread-456")
+        encoded = message.request["raw"]
+        self.assertEqual(
+            base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)),
+            first_eml,
+        )
+        reply_metadata = json.loads(first_reply)
+        self.assertEqual(reply_metadata["thread_id"], "thread-456")
+        self.assertEqual(reply_metadata["message_id"], "<original-123@example.com>")
+
+        result = run_quarto(str(message.source), "--to", "mail-eml", "--output", "-")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(message.eml, first_eml)
+        result = subprocess.run(
+            ["/bin/sh", str(preparation)],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(message.eml, first_eml)
+        self.assertEqual((message.bundle / "gmail-request.json").read_bytes(), first_request)
+        self.assertEqual((message.bundle / "reply.json").read_bytes(), first_reply)
+
+        replacement = self.render(
+            "reply",
+            lambda source: source.replace(
+                "  attachments:\n",
+                "  subject: Replacement ✓\n  attachments:\n",
+            ).replace("  quote: true", "  quote: false"),
+        )
+        replacement_preparation = replacement.bundle / "prepare.sh"
+        result = subprocess.run(
+            ["/bin/sh", str(replacement_preparation)],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replacement_parsed = parse_message(replacement.eml)
+        self.assertEqual(replacement_parsed["Subject"], "Replacement ✓")
+        self.assertEqual(replacement_parsed["In-Reply-To"], "<original-123@example.com>")
+        self.assertEqual(replacement.request["threadId"], "thread-456")
+        replacement_plain = next(
+            part for part in replacement_parsed.walk() if part.get_content_type() == "text/plain"
+        ).get_content()
+        replacement_html = next(
+            part for part in replacement_parsed.walk() if part.get_content_type() == "text/html"
+        ).get_content()
+        self.assertNotIn("Original plain body", replacement_plain)
+        self.assertNotIn("gmail_quote", replacement_html)
+        replacement_parts = list(replacement_parsed.walk())
+        self.assertTrue(any(part.get_content_disposition() == "inline" for part in replacement_parts))
+        self.assertTrue(any(part.get_content_disposition() == "attachment" for part in replacement_parts))
+
+        calls_before_actual_send = log.read_text(encoding="utf-8")
+        self.assertNotIn("gmail.users.messages.send", calls_before_actual_send)
         result = subprocess.run(
             ["/bin/sh", "-c", message.command],
             cwd=ROOT,
@@ -274,8 +399,30 @@ class QuartoMailTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, '{"id":"fake"}\n')
-        self.assertEqual(log.read_text(encoding="utf-8"), "call\n")
+        self.assertEqual(result.stdout, '{"id":"sent-once"}\n')
+        calls = log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(sum("gmail.users.messages.send" in call for call in calls), 1)
+
+        invalid_response = message.bundle / "invalid-response.json"
+        invalid_response.write_text("{}\n", encoding="utf-8")
+        result = subprocess.run(
+            [
+                "python3",
+                str(ROOT / "_extensions" / "mail" / "mime.py"),
+                "prepare",
+                str(message.bundle),
+                str(invalid_response),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing a raw RFC message", result.stderr)
+        self.assertFalse((message.bundle / "message.eml").exists())
+        self.assertFalse((message.bundle / "gmail-request.json").exists())
+        self.assertFalse((message.bundle / "reply.json").exists())
 
 
 if __name__ == "__main__":

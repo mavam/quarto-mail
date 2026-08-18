@@ -43,43 +43,20 @@ local function shell_quote(value)
   return "'" .. value:gsub("'", "'\"'\"'") .. "'"
 end
 
-local function gog_command(manifest, directory)
-  if manifest.inline_images ~= nil and #manifest.inline_images > 0 then
-    fail("mail-gog does not support local inline images; use mail-gmail")
-  end
-  local lines = {
-    "gog --account " .. shell_quote(manifest.account) .. " gmail send",
-  }
-  if manifest.from ~= manifest.account then
-    table.insert(lines, "--from " .. shell_quote(manifest.from))
-  end
-  if manifest.reply_to_message_id ~= nil then
-    table.insert(lines, "--reply-to-message-id " .. shell_quote(manifest.reply_to_message_id))
-  end
-  table.insert(lines, "--to " .. shell_quote(table.concat(manifest.to, ",")))
-  if #manifest.cc > 0 then
-    table.insert(lines, "--cc " .. shell_quote(table.concat(manifest.cc, ",")))
-  end
-  if #manifest.bcc > 0 then
-    table.insert(lines, "--bcc " .. shell_quote(table.concat(manifest.bcc, ",")))
-  end
-  if manifest.subject ~= nil then
-    table.insert(lines, "--subject " .. shell_quote(manifest.subject))
-  end
-  if manifest.quote then
-    table.insert(lines, "--quote")
-  end
-  table.insert(lines, "--body-file " .. shell_quote(pandoc.path.join({ directory, manifest.body_text })))
-  table.insert(lines, "--body-html-file " .. shell_quote(pandoc.path.join({ directory, manifest.body_html })))
-  for _, attachment in ipairs(manifest.attachments) do
-    table.insert(lines, "--attach " .. shell_quote(attachment))
-  end
-  table.insert(lines, "--no-input")
-  table.insert(lines, "--json")
-  return table.concat(lines, " \\\n  ") .. "\n"
-end
-
 function Writer(_document, _options)
   local directory = bundle_path()
-  return gog_command(read_manifest(directory), directory)
+  local manifest = read_manifest(directory)
+  local request = pandoc.path.join({ directory, "gmail-request.json" })
+  local preparation = pandoc.path.join({ directory, "prepare.sh" })
+  local missing_message
+  if manifest.reply_to_message_id ~= nil then
+    missing_message = "reply artifacts are not prepared; run " .. preparation
+  else
+    missing_message = "Gmail request is missing; render the message again"
+  end
+  return "test -f " .. shell_quote(request) .. " || { printf '%s\\n' " ..
+    shell_quote("quarto-mail: " .. missing_message) .. " >&2; exit 1; }\n" ..
+    "gog --account " .. shell_quote(manifest.account) ..
+    " api call gmail v1 gmail.users.messages.send \\\n  --params '{\"userId\":\"me\"}' \\\n  --body @" .. shell_quote(request) ..
+    " \\\n  --allow-write --force --no-input\n"
 end

@@ -35,8 +35,14 @@ function Writer(_document, _options)
   local stem = pandoc.path.filename(source):gsub("%.[^%.]+$", "")
   local bundle = pandoc.path.join({ pandoc.path.directory(source), stem .. ".mail" })
   local manifest = quarto.json.decode(read_file(pandoc.path.join({ bundle, "manifest.json" })))
-  if manifest.reply_to_message_id ~= nil then
-    fail("mail-eml does not support replies; use mail-gog")
+  local message = pandoc.path.join({ bundle, "message.eml" })
+  local handle = io.open(message, "rb")
+  if handle == nil and manifest.reply_to_message_id ~= nil then
+    fail("reply artifacts are not prepared; run " ..
+      pandoc.path.join({ bundle, "prepare.sh" }))
+  elseif handle == nil then
+    fail("cannot read " .. message)
   end
-  return read_file(pandoc.path.join({ bundle, "message.eml" }))
+  handle:close()
+  return read_file(message)
 end

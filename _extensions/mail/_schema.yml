@@ -68,4 +68,3 @@ formats:
   mail-plain: *mail-format
   mail-gog: *mail-format
   mail-eml: *mail-format
-  mail-gmail: *mail-format

@@ -26,8 +26,3 @@ contributes:
       standalone: false
       writer: eml.lua
       output-ext: eml
-    gmail:
-      validate-yaml: false
-      standalone: false
-      writer: gmail.lua
-      output-ext: sh
