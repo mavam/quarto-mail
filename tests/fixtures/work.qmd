@@ -12,12 +12,16 @@ mail:
     - Colleague Example <colleague@example.com>
   bcc:
     - Archive Example <archive@example.com>
-  subject: Project update
+  subject: Project üpdate
   attachments:
     - attachment~path~.txt
 ---
 
 The update includes:
+
+![Pipeline diagram](inline.png)
+
+![Hosted logo](https://example.com/logo.png)
 
 1. **Faster** pipelines
 2. A labeled [project link](https://example.com)

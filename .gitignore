@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .quarto/
 *.mail/
+*.eml
 .quarto-mail-*.qmd
 *.sh
 /*.html

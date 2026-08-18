@@ -8,7 +8,7 @@ formats:
       properties:
         senders:
           type: object
-          description: Named sender profiles.
+          description: Named sender profiles with account, from address, and optional display name.
         identities:
           type: object
           description: Named sign-off identity profiles.
@@ -67,3 +67,5 @@ formats:
           description: Include the quoted original message in a reply.
   mail-plain: *mail-format
   mail-gog: *mail-format
+  mail-eml: *mail-format
+  mail-gmail: *mail-format

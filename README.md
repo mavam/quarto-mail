@@ -7,6 +7,21 @@ explicit recipients, reusable sender profiles, and deterministic output.
 Rendering never sends mail or performs network operations. You can review the
 complete message before choosing to send it through Gmail.
 
+Quarto Mail provides five views of the same message:
+
+- `mail-html`: Creates a browser preview with local images resolved from their
+  source paths.
+- `mail-plain`: Prints the exact plain-text alternative.
+- `mail-eml`: Produces a self-contained MIME message with both body alternatives,
+  inline images, and attachments.
+- `mail-gog`: Generates a standard `gog gmail send` command for replies and new
+  messages without local inline images.
+- `mail-gmail`: Generates a Gmail API command that submits the complete MIME
+  message, including local inline images.
+
+See the [format examples](#4-render-and-review) for commands and representative
+output.
+
 ## 🚀 Get started
 
 Install [Quarto](https://quarto.org/docs/get-started/) 1.4 or later before you
@@ -40,7 +55,7 @@ quarto add mavam/quarto-mail
 ```
 
 Then add `mail-profiles` to the project's shared metadata and create a `.qmd`
-file using the format shown later.
+file using the following example.
 
 ### 2. Configure your profiles
 
@@ -53,6 +68,7 @@ mail-profiles:
     personal:
       account: user@example.com
       from: user@example.com
+      name: Alex Example
   identities:
     personal:
       name: Alex
@@ -112,35 +128,149 @@ hello.html
 hello.mail/
 ├── manifest.json
 ├── body.txt
-└── body.html
+├── body.html
+├── message.eml
+└── gmail-request.json
 ```
 
-The extension supports three output formats:
+Choose an output format based on what you want to inspect or send. Every format
+refreshes `manifest.json`, `body.txt`, and `body.html`. New messages also receive
+a deterministic `message.eml` and its encoded Gmail request.
 
-- `mail-html` creates the browser preview shown above.
-- `mail-plain` emits the exact plain-text body, for example with
-  `quarto render hello.qmd --to mail-plain`.
-- `mail-gog` emits a reviewable shell command that sends both body variants.
+<details>
+<summary><code>mail-html</code>: browser preview</summary>
 
-Every format also refreshes the same `.mail/` bundle. Review all parts of the
-message:
+`mail-html` is the default format. It creates `hello.html`, which displays the
+opening, Markdown body, sign-off, and signature in a browser:
+
+```sh
+quarto render hello.qmd
+```
+
+Open `hello.html` in a browser. It renders a minimal email body such as:
+
+```html
+<div>
+<div>Hi Jane,</div>
+<div><br></div>
+<div>This is the message body in Markdown.</div>
+<div><br></div>
+<div>Best,</div>
+<div><br></div>
+<div>Alex</div>
+</div>
+```
+
+The preview resolves local image paths directly. The transport body in
+`hello.mail/body.html` uses matching `cid:` references instead.
+
+</details>
+
+<details>
+<summary><code>mail-plain</code>: exact plain-text body</summary>
+
+```sh
+quarto render hello.qmd --to mail-plain --output -
+```
+
+```text
+Hi Jane,
+
+This is the message body in Markdown.
+
+Best,
+
+Alex
+```
+
+</details>
+
+<details>
+<summary><code>mail-eml</code>: self-contained MIME message</summary>
+
+```sh
+quarto render hello.qmd --to mail-eml --output hello.eml
+```
+
+The output is a complete MIME message. Messages with inline images and regular
+attachments have this structure:
+
+```text
+multipart/mixed
+├── multipart/alternative
+│   ├── text/plain
+│   └── multipart/related
+│       ├── text/html
+│       └── image/png; Content-ID=<image-1@quarto-mail>
+└── application/pdf; Content-Disposition=attachment
+```
+
+The EML contains the message headers, both body variants, inline image bytes,
+and attachment bytes. It doesn't contain Gmail credentials.
+
+</details>
+
+<details>
+<summary><code>mail-gog</code>: standard <code>gog gmail send</code> command</summary>
+
+```sh
+quarto render hello.qmd --to mail-gog --output -
+```
+
+```sh
+gog --account 'user@example.com' gmail send \
+  --to 'Jane Doe <jane@example.com>' \
+  --subject 'Hello' \
+  --body-file '/path/to/hello.mail/body.txt' \
+  --body-html-file '/path/to/hello.mail/body.html' \
+  --no-input \
+  --json
+```
+
+Use `mail-gog` for replies and for new messages without local inline images.
+Attachment paths appear as additional `--attach` arguments.
+
+</details>
+
+<details>
+<summary><code>mail-gmail</code>: raw MIME submission through Gmail</summary>
+
+```sh
+quarto render hello.qmd --to mail-gmail --output -
+```
+
+```sh
+gog --account 'user@example.com' api call gmail v1 gmail.users.messages.send \
+  --params '{"userId":"me"}' \
+  --body @'/path/to/hello.mail/gmail-request.json' \
+  --allow-write --force --no-input
+```
+
+Use `mail-gmail` for new messages with local inline images or when you want
+Gmail to submit the complete EML artifact. Raw MIME replies aren't supported.
+
+</details>
+
+Review the bundle before generating a send command:
 
 ```sh
 cat hello.mail/manifest.json
 cat hello.mail/body.txt
 ```
 
-Open `hello.html` in a browser. The manifest contains the sender, recipients,
-subject, reply information, and attachments. The bundle contains the exact
-plain-text and HTML bodies.
+Open `hello.mail/body.html` in a browser. The manifest records the sender,
+recipients, subject, reply information, attachments, and inline images as local
+paths and Content-IDs.
 
 ### 5. Prepare and send
 
 Install and authenticate [`gog`](https://github.com/steipete/gogcli) before
-sending. Then render the `mail-gog` format to a shell script:
+sending. Choose `mail-gog` for a normal message or reply without local inline
+images. Choose `mail-gmail` for a new message that contains local inline images.
+Then save the generated command as a shell script:
 
 ```sh
-quarto render hello.qmd --to mail-gog --output - > /tmp/send-hello.sh
+quarto render hello.qmd --to mail-gmail --output - > /tmp/send-hello.sh
 ```
 
 Inspect the generated command and the newly rendered bundle:
@@ -187,6 +317,32 @@ mail:
 A new message must specify `subject`; a reply may omit it or provide a
 replacement. Set `quote: true` to include the original message.
 
+### Add inline images
+
+Use ordinary Markdown image syntax. Local paths resolve relative to the `.qmd`
+file and become inline MIME parts. HTTPS URLs remain remote references and are
+never downloaded during rendering:
+
+```md
+![Diagram](images/diagram.png)
+![Hosted logo](https://example.com/logo.png)
+```
+
+The browser preview uses the local source path. The transport HTML in
+`body.html` uses a matching `cid:` URL. Local images support PNG, JPEG, GIF,
+WebP, and SVG. Other URL schemes and image formats produce an error.
+
+To prepare a raw Gmail submission, render and review the generated command:
+
+```sh
+quarto render hello.qmd --to mail-gmail --output -
+```
+
+This experimental format uses the authenticated `gog` account from the selected
+sender profile. Running the command sends the message. The `mail-gog` format
+rejects local inline images. Raw MIME replies are deferred; use `mail-gog` for
+replies.
+
 ### Attach files
 
 List attachment paths relative to the `.qmd` file:
@@ -212,9 +368,11 @@ mail-profiles:
     personal:
       account: user@example.com
       from: user@example.com
+      name: Alex Example
     work:
       account: work@example.com
       from: alias@example.com
+      name: Alex Example
 
   identities:
     personal:
@@ -231,10 +389,12 @@ its standard `metadata-files` option. Quarto's normal metadata merging rules
 apply.
 
 A sender controls the authenticated account and the address in the `From`
-header. Keep both values as bare email addresses. When they match, the generated
-command omits `--from`, preserving the primary sender name that plain `gog` uses.
-For a configured alias, the command passes `--from` and Gmail applies that
-alias's send-as name. An identity is the name placed directly after the closing:
+header. Keep `account` and `from` as bare email addresses. Set the optional
+`name` field to preserve the sender display name in raw MIME messages. When the
+addresses match, the generated `mail-gog` command omits `--from`, preserving the
+primary sender name that plain `gog` uses. For a configured alias, the command
+passes `--from` and Gmail applies that alias's send-as name. An identity is the
+name placed directly after the closing:
 
 ```text
 Best,
@@ -320,12 +480,13 @@ absolute HTTPS URLs for hosted images. Local image paths aren't supported. When
 `html` is present, `indent` affects only the plain-text signature.
 
 Rendering rejects malformed recipients, missing profiles, invalid indentation,
-and inline images in the authored Markdown body.
+and unsupported inline-image URLs or formats.
 
 ## 🧰 Requirements
 
 - Quarto 1.4 or later.
-- Optional: `gog` to send email with the `mail-gog` format.
+- Python 3 for deterministic MIME bundle generation during rendering.
+- Optional: `gog` to send email with the `mail-gog` or `mail-gmail` format.
 
 ## 📄 License
 

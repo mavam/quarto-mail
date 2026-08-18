@@ -44,6 +44,9 @@ local function shell_quote(value)
 end
 
 local function gog_command(manifest, directory)
+  if manifest.inline_images ~= nil and #manifest.inline_images > 0 then
+    fail("mail-gog does not support local inline images; use mail-gmail")
+  end
   local lines = {
     "gog --account " .. shell_quote(manifest.account) .. " gmail send",
   }
