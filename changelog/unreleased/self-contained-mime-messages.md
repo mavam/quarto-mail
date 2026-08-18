@@ -1,17 +1,19 @@
 ---
-title: Self-contained MIME messages
+title: Self-contained MIME delivery
 type: feature
 authors:
   - mavam
+prs:
+  - 1
 created: 2026-08-18T07:20:59.548909Z
 ---
 
-Quarto Mail can now bundle plain text, HTML, local inline images, and regular attachments into a deterministic `message.eml` artifact. HTTPS images remain remote references and rendering never downloads them.
+Quarto Mail now sends every new message and reply as a deterministic, reviewable MIME artifact through Gmail's raw API. Messages preserve plain-text and HTML alternatives, inline image bytes, regular attachments, explicit recipients, Unicode headers, and Gmail reply threading.
 
-Use the experimental raw Gmail format to prepare a reviewable submission command:
+Render one send script for every message:
 
 ```sh
-quarto render message.qmd --to mail-gmail --output -
+quarto render message.qmd --to mail-gog --output message.send.sh
 ```
 
-The existing `mail-gog` format remains available for messages without local inline images.
+Rendering remains local-only. Replies include a separate `message.mail/prepare.sh` command that reads the original Gmail message and finalizes `message.eml` without sending it. After reviewing the finalized MIME message, run `message.send.sh` to send it once.
