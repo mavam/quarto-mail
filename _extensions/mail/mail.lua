@@ -190,42 +190,6 @@ local function profile_indent(value, path)
   return number
 end
 
-local function valid_email_address(address)
-  return not address:find(",", 1, true) and
-    not address:find("%s") and
-    address:match("^[^@]+@[^@]+%.[^@]+$") ~= nil
-end
-
-local function validate_email_address(address, field)
-  if not valid_email_address(address) then
-    fail("invalid email address '" .. address .. "' in metadata field '" .. field .. "'")
-  end
-end
-
-local function validate_mailbox(mailbox, field)
-  local display_name, address = mailbox:match("^%s*(.-)%s*<%s*([^<>]-)%s*>%s*$")
-  if display_name == nil then
-    if mailbox:find("[<>]") then
-      fail("invalid mailbox '" .. mailbox .. "' in metadata field '" .. field .. "'")
-    end
-    validate_email_address(mailbox, field)
-    return
-  end
-  if display_name == "" or not valid_email_address(address) then
-    fail("invalid mailbox '" .. mailbox .. "' in metadata field '" .. field .. "'")
-  end
-  if display_name:find(",", 1, true) and
-      not display_name:match('^".*"$') then
-    fail("display names containing commas must be quoted in metadata field '" .. field .. "'")
-  end
-end
-
-local function validate_mailboxes(mailboxes, field)
-  for _, mailbox in ipairs(mailboxes) do
-    validate_mailbox(mailbox, field)
-  end
-end
-
 local function absolute_path(path)
   return path:sub(1, 1) == "/" or path:match("^%a:[/\\]") ~= nil
 end
@@ -364,63 +328,6 @@ local function link_for_plain_text(link)
   table.insert(result, pandoc.Space())
   table.insert(result, pandoc.Str("<" .. target .. ">"))
   return result
-end
-
-local function json_string(value)
-  local escapes = {
-    ['"'] = '\\"',
-    ['\\'] = '\\\\',
-    ['\b'] = '\\b',
-    ['\f'] = '\\f',
-    ['\n'] = '\\n',
-    ['\r'] = '\\r',
-    ['\t'] = '\\t',
-  }
-  return '"' .. value:gsub('[%z\1-\31\\"]', function(character)
-    return escapes[character] or string.format('\\u%04x', character:byte())
-  end) .. '"'
-end
-
-local function json_array(values)
-  local encoded = {}
-  for _, value in ipairs(values) do
-    table.insert(encoded, json_string(value))
-  end
-  return "[" .. table.concat(encoded, ", ") .. "]"
-end
-
-local function inline_images_json(images)
-  local encoded = {}
-  for _, image in ipairs(images) do
-    table.insert(encoded, "{\"source\": " .. json_string(image.source) ..
-      ", \"filename\": " .. json_string(image.filename) ..
-      ", \"content_type\": " .. json_string(image.content_type) ..
-      ", \"content_id\": " .. json_string(image.content_id) .. "}")
-  end
-  return "[" .. table.concat(encoded, ", ") .. "]"
-end
-
-local function manifest_json(values)
-  local subject = values.subject == nil and "null" or json_string(values.subject)
-  local fields = {
-    '  "source": ' .. json_string(values.source),
-    '  "account": ' .. json_string(values.account),
-    '  "from": ' .. json_string(values.from),
-    '  "from_name": ' .. (values.from_name == nil and "null" or json_string(values.from_name)),
-    '  "to": ' .. json_array(values.to),
-    '  "cc": ' .. json_array(values.cc),
-    '  "bcc": ' .. json_array(values.bcc),
-    '  "subject": ' .. subject,
-    '  "body_text": "body.txt"',
-    '  "body_html": "body.html"',
-    '  "attachments": ' .. json_array(values.attachments),
-    '  "inline_images": ' .. inline_images_json(values.inline_images),
-  }
-  if values.reply_to_message_id ~= nil then
-    table.insert(fields, '  "reply_to_message_id": ' .. json_string(values.reply_to_message_id))
-    table.insert(fields, '  "quote": ' .. tostring(values.quote))
-  end
-  return "{\n" .. table.concat(fields, ",\n") .. "\n}\n"
 end
 
 local function write_file(path, contents)
@@ -591,9 +498,6 @@ local function render_document(document, source, source_directory, bundle_direct
   )
   local quote = boolean(mail, "quote", false, "mail.quote")
 
-  validate_mailboxes(to, "mail.to")
-  validate_mailboxes(cc, "mail.cc")
-  validate_mailboxes(bcc, "mail.bcc")
   if subject == nil and reply_to_message_id == nil then
     fail("missing required metadata field 'mail.subject' for a new message")
   end
@@ -616,8 +520,6 @@ local function render_document(document, source, source_directory, bundle_direct
     "mail-profiles.senders." .. sender_name .. ".name",
     false
   )
-  validate_email_address(account, "mail-profiles.senders." .. sender_name .. ".account")
-  validate_email_address(from, "mail-profiles.senders." .. sender_name .. ".from")
   local resolved_identity = nil
   local identity_indent = 0
   local signature_plain = nil
@@ -731,16 +633,23 @@ local function render_document(document, source, source_directory, bundle_direct
     cc = cc,
     bcc = bcc,
     subject = subject,
+    body_text = "body.txt",
+    body_html = "body.html",
     attachments = resolved_attachments,
     inline_images = inline_images,
     reply_to_message_id = reply_to_message_id,
-    quote = quote,
   }
+  if reply_to_message_id ~= nil then
+    values.quote = quote
+  end
 
   pandoc.system.make_directory(bundle_directory, true)
   write_file(pandoc.path.join({ bundle_directory, "body.txt" }), body_text)
   write_file(pandoc.path.join({ bundle_directory, "body.html" }), body_html)
-  write_file(pandoc.path.join({ bundle_directory, "manifest.json" }), manifest_json(values))
+  write_file(
+    pandoc.path.join({ bundle_directory, "manifest.json" }),
+    quarto.json.encode(values) .. "\n"
+  )
   local script_directory = pandoc.path.directory(PANDOC_SCRIPT_FILE)
   local ok, code, _output, error_output = pcall(
     pandoc.system.command,
