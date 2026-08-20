@@ -3,6 +3,8 @@ title: Sender display names from sign-off identities
 type: bugfix
 authors:
   - mavam
+prs:
+  - 4
 created: 2026-08-20T08:13:04.215351Z
 ---
 
