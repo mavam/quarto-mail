@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build deterministic MIME artifacts and prepare Gmail API replies."""
 
 from __future__ import annotations
@@ -19,8 +18,7 @@ from email.policy import SMTP, default
 from email.utils import formatdate, getaddresses
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
-
+from typing import Any, ClassVar
 
 CONTENT_TYPES = {
     ".css": "text/css",
@@ -49,7 +47,7 @@ HEADER_REGISTRY = HeaderRegistry()
 class HTMLTextExtractor(HTMLParser):
     """Extract readable plain text from an HTML body without dependencies."""
 
-    BREAK_TAGS = {"br", "div", "li", "p", "tr"}
+    BREAK_TAGS: ClassVar[set[str]] = {"br", "div", "li", "p", "tr"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -145,7 +143,7 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
 
     for field in ("attachments", "inline_images"):
         if not isinstance(manifest.get(field), list):
-            raise ValueError(f"manifest field '{field}' must be a list")
+            raise TypeError(f"manifest field '{field}' must be a list")
     subject = manifest.get("subject")
     reply_id = manifest.get("reply_to_message_id")
     forward_id = manifest.get("forward_message_id")

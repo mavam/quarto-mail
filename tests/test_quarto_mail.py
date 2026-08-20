@@ -3,17 +3,16 @@ from __future__ import annotations
 import base64
 import json
 import os
-from email import policy
-from email.message import EmailMessage
-from email.parser import BytesParser
 import shutil
 import subprocess
 import tempfile
 import unittest
 import uuid
+from collections.abc import Callable
+from email import policy
+from email.message import EmailMessage
+from email.parser import BytesParser
 from pathlib import Path
-from typing import Callable
-
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"

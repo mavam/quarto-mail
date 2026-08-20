@@ -1,8 +1,10 @@
 pre-push:
   parallel: true
   commands:
+    ruff:
+      run: uvx ruff check --target-version py314 .
     snippets:
       run: python3 -m json.tool _extensions/mail/_snippets.json >/dev/null
     changelog-validate:
       glob: "changelog/**"
-      run: uvx tenzir-ship validate --lenient
+      run: uvx tenzir-ship validate
