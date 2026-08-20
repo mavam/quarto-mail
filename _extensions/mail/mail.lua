@@ -352,6 +352,7 @@ end
 local final_artifacts = {
   "message.eml",
   "gmail-request.json",
+  "gmail-draft-request.json",
   "reply.json",
   "prepare.sh",
 }
@@ -483,7 +484,8 @@ local function render_document(document, source, source_directory, bundle_direct
   local sender_name = scalar(mail, "sender", true, "mail.sender")
   local identity_name = scalar(mail, "identity", false, "mail.identity")
   local signature_name = scalar(mail, "signature", false, "mail.signature")
-  local to = string_list(mail, "to", true, "mail.to", mailbox_string)
+  local reply_all = boolean(mail, "reply-all", false, "mail.reply-all")
+  local to = string_list(mail, "to", not reply_all, "mail.to", mailbox_string)
   local cc = string_list(mail, "cc", false, "mail.cc", mailbox_string)
   local bcc = string_list(mail, "bcc", false, "mail.bcc", mailbox_string)
   local subject = scalar(mail, "subject", false, "mail.subject")
@@ -496,12 +498,20 @@ local function render_document(document, source, source_directory, bundle_direct
     false,
     "mail.reply-to-message-id"
   )
+  local forward_message_id = scalar(mail, "forward-message-id", false, "mail.forward-message-id")
   local quote = boolean(mail, "quote", false, "mail.quote")
+  local include_original_attachments = boolean(mail, "include-original-attachments", true, "mail.include-original-attachments")
+  local delivery = scalar(mail, "delivery", false, "mail.delivery") or "send"
+  local draft_id = scalar(mail, "draft-id", false, "mail.draft-id")
 
-  if subject == nil and reply_to_message_id == nil then
+  if reply_to_message_id ~= nil and forward_message_id ~= nil then fail("reply and forward IDs are mutually exclusive") end
+  if reply_all and reply_to_message_id == nil then fail("mail.reply-all requires 'mail.reply-to-message-id'") end
+  if delivery ~= "send" and delivery ~= "draft" then fail("mail.delivery must be 'send' or 'draft'") end
+  if draft_id ~= nil and delivery ~= "draft" then fail("mail.draft-id requires mail.delivery: draft") end
+  if subject == nil and reply_to_message_id == nil and forward_message_id == nil then
     fail("missing required metadata field 'mail.subject' for a new message")
   end
-  if quote and reply_to_message_id == nil then
+  if quote and reply_to_message_id == nil and forward_message_id == nil then
     fail("mail.quote requires 'mail.reply-to-message-id'")
   end
   local sender = profile(profiles, "senders", sender_name)
@@ -638,8 +648,13 @@ local function render_document(document, source, source_directory, bundle_direct
     attachments = resolved_attachments,
     inline_images = inline_images,
     reply_to_message_id = reply_to_message_id,
+    forward_message_id = forward_message_id,
+    reply_all = reply_all,
+    include_original_attachments = include_original_attachments,
+    delivery = delivery,
+    draft_id = draft_id,
   }
-  if reply_to_message_id ~= nil then
+  if reply_to_message_id ~= nil or forward_message_id ~= nil then
     values.quote = quote
   end
 

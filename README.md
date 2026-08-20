@@ -189,6 +189,25 @@ cat reply.send.sh
 `body.txt` and `body.html` contain the locally rendered reply body. The quoted
 original appears in the finalized alternatives inside `message.eml`.
 
+### Forward a message
+
+Set `mail.forward-message-id` to the original Gmail message ID. Preparation
+fetches the original and builds a standard forwarded-message section. Original
+attachments are included by default; set `include-original-attachments: false`
+to omit them.
+
+### Reply to everyone
+
+Set `reply-all: true` with `reply-to-message-id` and omit `to` and `cc` to derive
+recipients from the original message. The configured sender address is excluded;
+explicit `bcc` recipients remain unchanged.
+
+### Create or update a draft
+
+Set `delivery: draft` to generate a `gmail.users.drafts.create` command instead
+of sending. Add `draft-id` to update that existing Gmail draft on later renders.
+Draft delivery works with new messages, replies, and forwards.
+
 ### Send a reviewed message
 
 Run the generated `mail-gog` script once:
@@ -323,7 +342,12 @@ The `mail` object accepts:
 - `signature`: An optional signature profile.
 - `attachments`: File paths relative to the `.qmd` source.
 - `reply-to-message-id`: The Gmail message ID for a reply.
+- `reply-all`: Derive reply recipients from the original, excluding the sender.
+- `forward-message-id`: The Gmail message ID to forward.
+- `include-original-attachments`: Whether a forward carries original attachments.
 - `quote`: Whether a reply includes the original plain-text and HTML bodies.
+- `delivery`: `send` (the default) or `draft`.
+- `draft-id`: An existing Gmail draft to update.
 
 ### Sender and identity profiles
 
