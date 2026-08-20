@@ -442,6 +442,19 @@ local function read_file(path)
   return contents
 end
 
+local final_artifacts = {
+  "message.eml",
+  "gmail-request.json",
+  "reply.json",
+  "prepare.sh",
+}
+
+local function remove_final_artifacts(directory)
+  for _, name in ipairs(final_artifacts) do
+    os.remove(pandoc.path.join({ directory, name }))
+  end
+end
+
 local function source_mail_metadata(source)
   local contents = read_file(source)
   local parsed = pandoc.read(contents, "markdown-smart-subscript")
@@ -551,9 +564,7 @@ local function render_email_html(
   return "<div>\n" .. table.concat(html, "\n") .. "\n</div>\n"
 end
 
-function Pandoc(document)
-  local source = source_path()
-  local source_directory = pandoc.path.directory(source)
+local function render_document(document, source, source_directory, bundle_directory)
   local mail = source_mail_metadata(source)
   if mail == nil or type(mail) ~= "table" then
     fail("missing required metadata field 'mail'")
@@ -670,9 +681,6 @@ function Pandoc(document)
   end
   document.blocks = blocks
 
-  local filename = pandoc.path.filename(source)
-  local stem = filename:gsub("%.[^%.]+$", "")
-  local bundle_directory = pandoc.path.join({ source_directory, stem .. ".mail" })
   local resolved_attachments = resolve_attachments(attachments, source_directory)
 
   local identity_text = nil
@@ -733,10 +741,6 @@ function Pandoc(document)
   write_file(pandoc.path.join({ bundle_directory, "body.txt" }), body_text)
   write_file(pandoc.path.join({ bundle_directory, "body.html" }), body_html)
   write_file(pandoc.path.join({ bundle_directory, "manifest.json" }), manifest_json(values))
-  local eml_path = pandoc.path.join({ bundle_directory, "message.eml" })
-  local gmail_request_path = pandoc.path.join({ bundle_directory, "gmail-request.json" })
-  local reply_path = pandoc.path.join({ bundle_directory, "reply.json" })
-  local preparation_path = pandoc.path.join({ bundle_directory, "prepare.sh" })
   local script_directory = pandoc.path.directory(PANDOC_SCRIPT_FILE)
   local ok, code, _output, error_output = pcall(
     pandoc.system.command,
@@ -748,17 +752,11 @@ function Pandoc(document)
     }
   )
   if not ok then
-    os.remove(eml_path)
-    os.remove(gmail_request_path)
-    os.remove(reply_path)
-    os.remove(preparation_path)
+    remove_final_artifacts(bundle_directory)
     fail("cannot run Python 3 MIME builder: " .. tostring(code))
   end
   if code ~= false and code ~= 0 then
-    os.remove(eml_path)
-    os.remove(gmail_request_path)
-    os.remove(reply_path)
-    os.remove(preparation_path)
+    remove_final_artifacts(bundle_directory)
     local detail = error_output ~= nil and error_output:gsub("%s+$", "") or ""
     if detail == "" then
       detail = "exit status " .. tostring(code)
@@ -767,4 +765,24 @@ function Pandoc(document)
   end
 
   return document
+end
+
+function Pandoc(document)
+  local source = source_path()
+  local source_directory = pandoc.path.directory(source)
+  local filename = pandoc.path.filename(source)
+  local stem = filename:gsub("%.[^%.]+$", "")
+  local bundle_directory = pandoc.path.join({ source_directory, stem .. ".mail" })
+  local succeeded, result = pcall(
+    render_document,
+    document,
+    source,
+    source_directory,
+    bundle_directory
+  )
+  if not succeeded then
+    remove_final_artifacts(bundle_directory)
+    error(result, 0)
+  end
+  return result
 end

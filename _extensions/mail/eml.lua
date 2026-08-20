@@ -44,5 +44,9 @@ function Writer(_document, _options)
     fail("cannot read " .. message)
   end
   handle:close()
-  return read_file(message)
+  local contents = read_file(message)
+  if contents:sub(-2) ~= "\r\n" then
+    fail("MIME message does not end with CRLF: " .. message)
+  end
+  return contents:sub(1, -2)
 end

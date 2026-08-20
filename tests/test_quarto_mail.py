@@ -4,6 +4,7 @@ import base64
 import json
 import os
 from email import policy
+from email.message import EmailMessage
 from email.parser import BytesParser
 import shutil
 import subprocess
@@ -220,12 +221,18 @@ class QuartoMailTests(unittest.TestCase):
         self.assertEqual(decoded, message.eml)
         self.assertNotIn("threadId", message.request)
 
-        result = run_quarto(str(message.source), "--to", "mail-eml", "--output", "-")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            result.stdout.replace("\n", "\r\n").encode().rstrip(b"\r\n"),
-            message.eml.rstrip(b"\r\n"),
+        eml_output = message.source.with_name(f"{message.source.stem}.output.eml")
+        self.addCleanup(eml_output.unlink, missing_ok=True)
+        result = run_quarto(
+            str(message.source),
+            "--to",
+            "mail-eml",
+            "--output",
+            eml_output.name,
+            "--quiet",
         )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(eml_output.read_bytes(), message.eml)
         first_eml = message.eml
         first_request = (message.bundle / "gmail-request.json").read_bytes()
         result = run_quarto(str(message.source), "--quiet")
@@ -423,6 +430,120 @@ class QuartoMailTests(unittest.TestCase):
         self.assertFalse((message.bundle / "message.eml").exists())
         self.assertFalse((message.bundle / "gmail-request.json").exists())
         self.assertFalse((message.bundle / "reply.json").exists())
+
+    def test_removes_stale_artifacts_after_failed_render(self) -> None:
+        message = self.render("work")
+        source = message.source.read_text(encoding="utf-8")
+        message.source.write_text(
+            source.replace("  subject: Project üpdate\n", ""),
+            encoding="utf-8",
+        )
+
+        result = run_quarto(str(message.source))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "missing required metadata field 'mail.subject'",
+            result.stdout + result.stderr,
+        )
+        for name in ("message.eml", "gmail-request.json", "reply.json", "prepare.sh"):
+            self.assertFalse((message.bundle / name).exists(), name)
+
+    def test_invalidates_prepared_reply_after_builder_change(self) -> None:
+        message = self.render("reply")
+        builder = ROOT / "_extensions" / "mail" / "mime.py"
+        result = subprocess.run(
+            ["python3", str(builder), "prepare", str(message.bundle), str(GMAIL_RESPONSE)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((message.bundle / "message.eml").is_file())
+
+        with tempfile.TemporaryDirectory(prefix="quarto-mail-builder-") as directory:
+            changed_builder = Path(directory) / "mime.py"
+            changed_builder.write_bytes(builder.read_bytes() + b"\n# synthetic builder change\n")
+            result = subprocess.run(
+                ["python3", str(changed_builder), "render", str(message.bundle)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((message.bundle / "prepare.sh").is_file())
+        for name in ("message.eml", "gmail-request.json", "reply.json"):
+            self.assertFalse((message.bundle / name).exists(), name)
+
+    def test_rewrites_complete_quoted_content_ids(self) -> None:
+        message = self.render("reply")
+        original = EmailMessage(policy=policy.SMTP)
+        original["From"] = "Sender <sender@example.com>"
+        original["To"] = "matthias@vallentin.net"
+        original["Subject"] = "Overlapping content IDs"
+        original["Message-ID"] = "<original-overlap@example.com>"
+        original["Date"] = "Tue, 12 Aug 2025 10:30:00 +0200"
+        original.set_content("Original plain body.")
+        original.add_alternative(
+            '<img src="cid:image@example.com">'
+            '<img src="cid:image@example.com.extra">',
+            subtype="html",
+        )
+        related = original.get_payload()[-1]
+        related.add_related(
+            b"short-id-image",
+            maintype="image",
+            subtype="png",
+            cid="<image@example.com>",
+            disposition="inline",
+        )
+        related.add_related(
+            b"long-id-image",
+            maintype="image",
+            subtype="png",
+            cid="<image@example.com.extra>",
+            disposition="inline",
+        )
+        response = {
+            "id": "message-123",
+            "threadId": "thread-overlap",
+            "raw": base64.urlsafe_b64encode(original.as_bytes()).rstrip(b"=").decode("ascii"),
+        }
+        response_path = message.bundle / "overlapping-response.json"
+        response_path.write_text(json.dumps(response), encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                "python3",
+                str(ROOT / "_extensions" / "mail" / "mime.py"),
+                "prepare",
+                str(message.bundle),
+                str(response_path),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        parsed = parse_message(message.eml)
+        html_content = next(
+            part for part in parsed.walk() if part.get_content_type() == "text/html"
+        ).get_content()
+        expected_payloads = {b"short-id-image", b"long-id-image"}
+        quoted_parts = [
+            part
+            for part in parsed.walk()
+            if part.get_payload(decode=True) in expected_payloads
+        ]
+        self.assertEqual(len(quoted_parts), 2)
+        for part in quoted_parts:
+            content_id = str(part["Content-ID"]).strip("<>")
+            self.assertIn(f'cid:{content_id}"', html_content)
 
 
 if __name__ == "__main__":

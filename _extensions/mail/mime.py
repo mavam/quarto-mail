@@ -41,6 +41,7 @@ CONTENT_TYPES = {
 }
 FINAL_ARTIFACTS = ("message.eml", "gmail-request.json", "reply.json")
 MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]+>")
+CID_REFERENCE_END = r"(?=$|[\s\"'(),<>])"
 
 
 class HTMLTextExtractor(HTMLParser):
@@ -99,6 +100,7 @@ def update_digest(digest: Any, label: str, value: bytes) -> None:
 
 def local_digest(bundle: Path, manifest: dict[str, Any]) -> str:
     digest = hashlib.sha256()
+    update_digest(digest, "mime-builder", Path(__file__).read_bytes())
     manifest_bytes = (bundle / "manifest.json").read_bytes()
     update_digest(digest, "manifest", manifest_bytes)
     for key in ("body_text", "body_html"):
@@ -241,7 +243,11 @@ def reply_context(response: dict[str, Any]) -> dict[str, Any]:
             if content_id_header is None or part.is_multipart():
                 continue
             content_id = str(content_id_header).strip().strip("<>")
-            if not re.search(rf"cid:{re.escape(content_id)}", original_html, re.IGNORECASE):
+            reference_pattern = re.compile(
+                rf"cid:{re.escape(content_id)}{CID_REFERENCE_END}",
+                re.IGNORECASE,
+            )
+            if not reference_pattern.search(original_html):
                 continue
             payload = part.get_payload(decode=True)
             if payload is None:
@@ -250,11 +256,9 @@ def reply_context(response: dict[str, Any]) -> dict[str, Any]:
             rewritten_content_id = (
                 f"quoted-{len(quoted_inline_images) + 1}-{suffix}@quarto-mail"
             )
-            original_html = re.sub(
-                rf"cid:{re.escape(content_id)}",
+            original_html = reference_pattern.sub(
                 f"cid:{rewritten_content_id}",
                 original_html,
-                flags=re.IGNORECASE,
             )
             quoted_inline_images.append({
                 "content_id": rewritten_content_id,
