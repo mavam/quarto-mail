@@ -61,10 +61,26 @@ formats:
               type: file
         reply-to-message-id:
           type: string
-          description: Provider message ID that this message replies to.
+          description: Gmail message ID that this message replies to.
+        reply-all:
+          type: boolean
+          description: Derive reply recipients from the original message, excluding the sender.
+        forward-message-id:
+          type: string
+          description: Gmail message ID whose content and attachments this message forwards.
+        include-original-attachments:
+          type: boolean
+          description: Include original attachments in a forward. Defaults to true.
         quote:
           type: boolean
           description: Include the quoted original message in a reply.
+        delivery:
+          type: string
+          enum: [send, draft]
+          description: Generate a send command or a Gmail draft create/update command.
+        draft-id:
+          type: string
+          description: Existing Gmail draft ID to update when delivery is draft.
   mail-plain: *mail-format
   mail-gog: *mail-format
   mail-eml: *mail-format

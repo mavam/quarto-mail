@@ -439,6 +439,215 @@ class QuartoMailTests(unittest.TestCase):
         self.assertFalse((message.bundle / "gmail-request.json").exists())
         self.assertFalse((message.bundle / "reply.json").exists())
 
+    def test_forwards_messages_and_creates_or_updates_drafts(self) -> None:
+        message = self.render(
+            "reply",
+            lambda source: source.replace(
+                "  reply-to-message-id: message-123\n  quote: true",
+                "  forward-message-id: message-123\n  delivery: draft",
+            ),
+        )
+        preparation = message.bundle / "prepare.sh"
+
+        result = subprocess.run(
+            ["/bin/sh", "-c", message.command],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("forward artifacts are not prepared; run", result.stderr)
+        self.assertIn(str(preparation), result.stderr)
+        result = run_quarto(str(message.source), "--to", "mail-eml", "--output", "-")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "forward artifacts are not prepared; run",
+            result.stdout + result.stderr,
+        )
+
+        result = subprocess.run(
+            [
+                "python3",
+                str(ROOT / "_extensions" / "mail" / "mime.py"),
+                "prepare",
+                str(message.bundle),
+                str(GMAIL_RESPONSE),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        parsed = parse_message(message.eml)
+        self.assertEqual(parsed["Subject"], "Fwd: Original üpdate")
+        self.assertIsNone(parsed["In-Reply-To"])
+        plain = next(
+            part for part in parsed.walk() if part.get_content_type() == "text/plain"
+        ).get_content()
+        html_body = next(
+            part for part in parsed.walk() if part.get_content_type() == "text/html"
+        ).get_content()
+        self.assertIn("Forwarded message", plain)
+        self.assertIn("Original plain body", plain)
+        self.assertIn("Cc: Other Participant <participant@example.com>", plain)
+        self.assertIn("Cc: Other Participant &lt;participant@example.com&gt;", html_body)
+        self.assertIn("cid:quoted-1-", html_body)
+        forwarded_inline = [
+            part
+            for part in parsed.walk()
+            if str(part.get("Content-ID", "")).startswith("<quoted-1-")
+        ]
+        self.assertEqual(len(forwarded_inline), 1)
+        self.assertEqual(
+            forwarded_inline[0].get_payload(decode=True),
+            (FIXTURES / "inline.png").read_bytes(),
+        )
+        draft_request = json.loads(
+            (message.bundle / "gmail-draft-request.json").read_text()
+        )
+        self.assertEqual(draft_request["message"], message.request)
+        self.assertIn("gmail.users.drafts.create", message.command)
+        preparation_state = json.loads(
+            (message.bundle / "reply.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(preparation_state["operation"], "forward")
+        self.assertEqual(preparation_state["gmail_message_id"], "message-123")
+
+        preserved_artifacts = {
+            name: (message.bundle / name).read_bytes()
+            for name in (
+                "message.eml",
+                "gmail-request.json",
+                "gmail-draft-request.json",
+                "reply.json",
+            )
+        }
+        result = run_quarto(str(message.source), "--quiet")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name, contents in preserved_artifacts.items():
+            self.assertEqual((message.bundle / name).read_bytes(), contents, name)
+
+        updated = self.render(
+            "work",
+            lambda source: source.replace(
+                "  subject: Project üpdate",
+                "  subject: Project üpdate\n  delivery: draft\n  draft-id: draft-123",
+            ),
+        )
+        self.assertIn("gmail.users.drafts.update", updated.command)
+        self.assertIn("draft-123", updated.command)
+
+    def test_forwards_filename_attachments_without_content_disposition(self) -> None:
+        message = self.render(
+            "reply",
+            lambda source: source.replace(
+                "  reply-to-message-id: message-123\n  quote: true",
+                "  forward-message-id: message-123",
+            ),
+        )
+        original = EmailMessage(policy=policy.SMTP)
+        original["From"] = "Sender <sender@example.com>"
+        original["To"] = "Recipient <recipient@example.com>"
+        original["Subject"] = "Original attachments"
+        original["Message-ID"] = "<original-attachments@example.com>"
+        original["Date"] = "Tue, 12 Aug 2025 10:30:00 +0200"
+        original.set_content("Original plain body.")
+        original.add_alternative(
+            '<div>Original HTML body.</div><img src="cid:related@example.com">',
+            subtype="html",
+        )
+        related = original.get_payload()[-1]
+        related.add_related(
+            b"related-image",
+            maintype="image",
+            subtype="png",
+            cid="<related@example.com>",
+            filename="related.png",
+        )
+        related_image = related.get_payload()[-1]
+        del related_image["Content-Disposition"]
+        related_image.set_param("name", "related.png", header="Content-Type")
+
+        attachment = EmailMessage(policy=policy.SMTP)
+        attachment.set_content(
+            b"attachment-without-disposition",
+            maintype="application",
+            subtype="octet-stream",
+        )
+        attachment.set_param(
+            "name",
+            "without-disposition.bin",
+            header="Content-Type",
+        )
+        original.make_mixed()
+        original.attach(attachment)
+        response = {
+            "id": "message-123",
+            "threadId": "thread-attachments",
+            "raw": base64.urlsafe_b64encode(original.as_bytes())
+            .rstrip(b"=")
+            .decode("ascii"),
+        }
+        response_path = message.bundle / "attachment-response.json"
+        response_path.write_text(json.dumps(response), encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                "python3",
+                str(ROOT / "_extensions" / "mail" / "mime.py"),
+                "prepare",
+                str(message.bundle),
+                str(response_path),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        parsed = parse_message(message.eml)
+        matching_parts = [
+            part
+            for part in parsed.walk()
+            if part.get_payload(decode=True)
+            in {b"related-image", b"attachment-without-disposition"}
+        ]
+        self.assertEqual(len(matching_parts), 2)
+        related_part = next(
+            part
+            for part in matching_parts
+            if part.get_payload(decode=True) == b"related-image"
+        )
+        attachment_part = next(
+            part
+            for part in matching_parts
+            if part.get_payload(decode=True) == b"attachment-without-disposition"
+        )
+        self.assertEqual(related_part.get_content_disposition(), "inline")
+        self.assertRegex(str(related_part["Content-ID"]), r"^<quoted-1-")
+        self.assertEqual(attachment_part.get_filename(), "without-disposition.bin")
+        self.assertEqual(attachment_part.get_content_disposition(), "attachment")
+
+    def test_derives_reply_all_recipients(self) -> None:
+        message = self.render(
+            "reply",
+            lambda source: source.replace(
+                "  to:\n    - Original Sender <sender@example.com>\n  cc:\n    - Other Participant <participant@example.com>",
+                "  reply-all: true",
+            ),
+        )
+        result = subprocess.run(
+            ["python3", str(ROOT / "_extensions" / "mail" / "mime.py"), "prepare", str(message.bundle), str(GMAIL_RESPONSE)],
+            cwd=ROOT, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        parsed = parse_message(message.eml)
+        self.assertEqual(parsed["To"], "Sender Ü <sender@example.com>")
+        self.assertEqual(parsed["Cc"], "Other Participant <participant@example.com>")
+
     def test_accepts_quoted_commas_and_unicode_display_names(self) -> None:
         message = self.render(
             "work",

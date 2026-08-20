@@ -40,6 +40,9 @@ function Writer(_document, _options)
   if handle == nil and manifest.reply_to_message_id ~= nil then
     fail("reply artifacts are not prepared; run " ..
       pandoc.path.join({ bundle, "prepare.sh" }))
+  elseif handle == nil and manifest.forward_message_id ~= nil then
+    fail("forward artifacts are not prepared; run " ..
+      pandoc.path.join({ bundle, "prepare.sh" }))
   elseif handle == nil then
     fail("cannot read " .. message)
   end

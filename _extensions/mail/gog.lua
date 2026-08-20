@@ -51,12 +51,25 @@ function Writer(_document, _options)
   local missing_message
   if manifest.reply_to_message_id ~= nil then
     missing_message = "reply artifacts are not prepared; run " .. preparation
+  elseif manifest.forward_message_id ~= nil then
+    missing_message = "forward artifacts are not prepared; run " .. preparation
   else
     missing_message = "Gmail request is missing; render the message again"
   end
-  return "test -f " .. shell_quote(request) .. " || { printf '%s\\n' " ..
+  local method = "gmail.users.messages.send"
+  local params = '{"userId":"me"}'
+  local body = request
+  if manifest.delivery == "draft" then
+    method = "gmail.users.drafts.create"
+    body = pandoc.path.join({ directory, "gmail-draft-request.json" })
+    if manifest.draft_id ~= nil then
+      method = "gmail.users.drafts.update"
+      params = '{"userId":"me","id":"' .. manifest.draft_id .. '"}'
+    end
+  end
+  return "test -f " .. shell_quote(body) .. " || { printf '%s\\n' " ..
     shell_quote("quarto-mail: " .. missing_message) .. " >&2; exit 1; }\n" ..
     "gog --account " .. shell_quote(manifest.account) ..
-    " api call gmail v1 gmail.users.messages.send \\\n  --params '{\"userId\":\"me\"}' \\\n  --body @" .. shell_quote(request) ..
+    " api call gmail v1 " .. method .. " \\\n  --params " .. shell_quote(params) .. " \\\n  --body @" .. shell_quote(body) ..
     " \\\n  --allow-write --force --no-input\n"
 end

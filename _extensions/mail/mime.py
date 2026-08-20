@@ -16,7 +16,7 @@ from email.headerregistry import Address, HeaderRegistry
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.policy import SMTP, default
-from email.utils import formatdate
+from email.utils import formatdate, getaddresses
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -40,7 +40,7 @@ CONTENT_TYPES = {
     ".xml": "application/xml",
     ".zip": "application/zip",
 }
-FINAL_ARTIFACTS = ("message.eml", "gmail-request.json", "reply.json")
+FINAL_ARTIFACTS = ("message.eml", "gmail-request.json", "gmail-draft-request.json", "reply.json")
 MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]+>")
 CID_REFERENCE_END = r"(?=$|[\s\"'(),<>])"
 HEADER_REGISTRY = HeaderRegistry()
@@ -136,7 +136,7 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         values = manifest.get(field)
         if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
             raise ValueError(f"manifest field '{field}' must be a list of mailboxes")
-        if field == "to" and not values:
+        if field == "to" and not values and not manifest.get("reply_all", False):
             raise ValueError("manifest field 'to' must contain at least one mailbox")
         parsed[field] = [
             parse_mailbox(value, f"{field}[{index}]")
@@ -148,12 +148,24 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"manifest field '{field}' must be a list")
     subject = manifest.get("subject")
     reply_id = manifest.get("reply_to_message_id")
+    forward_id = manifest.get("forward_message_id")
     if subject is not None and (not isinstance(subject, str) or "\r" in subject or "\n" in subject):
         raise ValueError("manifest field 'subject' must be a single-line string")
-    if reply_id is None and subject is None:
+    if reply_id is None and forward_id is None and subject is None:
         raise ValueError("manifest field 'subject' is required for a new message")
+    if reply_id is not None and forward_id is not None:
+        raise ValueError("reply and forward IDs are mutually exclusive")
     if reply_id is not None and (not isinstance(reply_id, str) or reply_id == "" or "\r" in reply_id or "\n" in reply_id):
         raise ValueError("manifest field 'reply_to_message_id' must be a non-empty single-line string")
+    if forward_id is not None and (
+        not isinstance(forward_id, str)
+        or forward_id == ""
+        or "\r" in forward_id
+        or "\n" in forward_id
+    ):
+        raise ValueError(
+            "manifest field 'forward_message_id' must be a non-empty single-line string"
+        )
     if manifest.get("quote", False) not in (True, False):
         raise ValueError("manifest field 'quote' must be a boolean")
     return parsed
@@ -334,17 +346,43 @@ def reply_context(response: dict[str, Any]) -> dict[str, Any]:
                 "filename": part.get_filename(),
                 "payload": payload,
             })
+    attachments: list[dict[str, Any]] = []
+
+    def collect_attachments(part: EmailMessage, inside_related: bool = False) -> None:
+        if part.is_multipart():
+            related = inside_related or part.get_content_subtype() == "related"
+            for child in part.iter_parts():
+                collect_attachments(child, related)
+            return
+        disposition = part.get_content_disposition()
+        filename = part.get_filename()
+        if disposition != "attachment" and (
+            filename is None or disposition == "inline" or inside_related
+        ):
+            return
+        payload = part.get_payload(decode=True)
+        if payload is not None:
+            attachments.append({
+                "filename": filename,
+                "content_type": part.get_content_type(),
+                "payload": payload,
+            })
+
+    collect_attachments(original)
     return {
         "gmail_message_id": response.get("id"),
         "thread_id": thread_id,
         "message_id": message_id,
         "references": reference_ids,
         "from": str(original.get("From", "")),
+        "to": [str(x) for x in original.get_all("To", [])],
+        "cc": [str(x) for x in original.get_all("Cc", [])],
         "date": str(original.get("Date", "")),
         "subject": str(original.get("Subject", "")),
         "plain": original_plain.strip("\n"),
         "html": original_html,
         "inline_images": quoted_inline_images,
+        "attachments": attachments,
     }
 
 
@@ -366,6 +404,54 @@ def quote_bodies(plain: str, html_body: str, context: dict[str, Any]) -> tuple[s
     return plain, html_body
 
 
+def forward_subject(subject: str | None) -> str:
+    if re.match(r"^\s*fwd?\s*:", subject or "", re.IGNORECASE):
+        return subject or ""
+    return f"Fwd: {subject or ''}".rstrip()
+
+
+def forward_bodies(
+    plain: str,
+    html_body: str,
+    context: dict[str, Any],
+) -> tuple[str, str]:
+    header_lines = [
+        "---------- Forwarded message ---------",
+        f"From: {context['from']}",
+        f"Date: {context['date']}",
+        f"Subject: {context['subject']}",
+        f"To: {', '.join(context['to'])}",
+    ]
+    if context["cc"]:
+        header_lines.append(f"Cc: {', '.join(context['cc'])}")
+    header = "\n".join(header_lines)
+    forwarded_plain = plain.rstrip() + "\n\n" + header + "\n\n" + context["plain"] + "\n"
+    forwarded_header = html.escape(header).replace("\n", "<br>")
+    forwarded_html = (
+        html_body.rstrip()
+        + f'<br><br><div class="gmail_quote">{forwarded_header}'
+        + f'<br><br>{context["html"]}</div>\n'
+    )
+    return forwarded_plain, forwarded_html
+
+
+def derive_reply_all(
+    mailboxes: dict[str, Any],
+    context: dict[str, Any],
+) -> None:
+    seen = {mailboxes["from"].addr_spec.lower()}
+    recipients: list[Address] = []
+    original_recipients = [context["from"], *context["to"], *context["cc"]]
+    for name, address in getaddresses(original_recipients):
+        if address and address.lower() not in seen:
+            seen.add(address.lower())
+            recipients.append(Address(display_name=name, addr_spec=address))
+    if not recipients:
+        raise ValueError("reply-all found no recipients")
+    mailboxes["to"] = recipients[:1]
+    mailboxes["cc"] = recipients[1:]
+
+
 def build_message(
     bundle: Path,
     manifest: dict[str, Any],
@@ -373,6 +459,8 @@ def build_message(
     context: dict[str, Any] | None,
 ) -> tuple[bytes, dict[str, str], dict[str, Any] | None]:
     message = EmailMessage(policy=SMTP)
+    if manifest.get("reply_all") and context is not None:
+        derive_reply_all(mailboxes, context)
     message["From"] = mailboxes["from"]
     message["To"] = mailboxes["to"]
     if mailboxes["cc"]:
@@ -381,7 +469,7 @@ def build_message(
         message["Bcc"] = mailboxes["bcc"]
 
     thread_id: str | None = None
-    reply_metadata: dict[str, Any] | None = None
+    preparation_metadata: dict[str, Any] | None = None
     if manifest.get("reply_to_message_id") is not None:
         if context is None:
             raise ValueError("reply preparation requires a Gmail API response")
@@ -390,12 +478,32 @@ def build_message(
         thread_id = context["thread_id"]
         message["In-Reply-To"] = context["message_id"]
         message["References"] = " ".join(context["references"])
-        subject = manifest.get("subject") if manifest.get("subject") is not None else reply_subject(context["subject"])
-        reply_metadata = {
+        subject = (
+            manifest["subject"]
+            if manifest.get("subject") is not None
+            else reply_subject(context["subject"])
+        )
+        preparation_metadata = {
+            "operation": "reply",
             "gmail_message_id": manifest["reply_to_message_id"],
             "thread_id": thread_id,
             "message_id": context["message_id"],
             "references": context["references"],
+            "from": context["from"],
+            "date": context["date"],
+            "subject": context["subject"],
+        }
+    elif manifest.get("forward_message_id") is not None:
+        if context is None:
+            raise ValueError("forward preparation requires a Gmail API response")
+        if context.get("gmail_message_id") not in (None, manifest["forward_message_id"]):
+            raise ValueError("the Gmail response does not match mail.forward-message-id")
+        subject = manifest.get("subject") or forward_subject(context["subject"])
+        preparation_metadata = {
+            "operation": "forward",
+            "gmail_message_id": manifest["forward_message_id"],
+            "thread_id": None,
+            "message_id": context["message_id"],
             "from": context["from"],
             "date": context["date"],
             "subject": context["subject"],
@@ -408,7 +516,9 @@ def build_message(
 
     plain = (bundle / manifest["body_text"]).read_text(encoding="utf-8")
     html_body = (bundle / manifest["body_html"]).read_text(encoding="utf-8")
-    if context is not None and manifest["quote"]:
+    if context is not None and manifest.get("forward_message_id") is not None:
+        plain, html_body = forward_bodies(plain, html_body, context)
+    elif context is not None and manifest["quote"]:
         plain, html_body = quote_bodies(plain, html_body, context)
 
     message.set_content(plain, charset="utf-8")
@@ -425,7 +535,9 @@ def build_message(
             filename=image["filename"],
             disposition="inline",
         )
-    if context is not None and manifest["quote"]:
+    if context is not None and (
+        manifest["quote"] or manifest.get("forward_message_id") is not None
+    ):
         for image in context["inline_images"]:
             maintype, subtype = image["content_type"].split("/", 1)
             options: dict[str, Any] = {
@@ -437,6 +549,21 @@ def build_message(
             if image["filename"] is not None:
                 options["filename"] = image["filename"]
             html_part.add_related(image["payload"], **options)
+
+    if (
+        context is not None
+        and manifest.get("forward_message_id") is not None
+        and manifest.get("include_original_attachments", True)
+    ):
+        for attachment in context["attachments"]:
+            maintype, subtype = attachment["content_type"].split("/", 1)
+            message.add_attachment(
+                attachment["payload"],
+                maintype=maintype,
+                subtype=subtype,
+                filename=attachment["filename"],
+                disposition="attachment",
+            )
 
     for source_value in manifest["attachments"]:
         path = Path(source_value)
@@ -457,7 +584,7 @@ def build_message(
     request = {"raw": encode_base64url(raw)}
     if thread_id is not None:
         request["threadId"] = thread_id
-    return raw, request, reply_metadata
+    return raw, request, preparation_metadata
 
 
 def remove_artifacts(bundle: Path) -> None:
@@ -483,7 +610,7 @@ def write_final_artifacts(
     bundle: Path,
     raw: bytes,
     request: dict[str, str],
-    reply_metadata: dict[str, Any] | None,
+    preparation_metadata: dict[str, Any] | None,
     digest: str,
 ) -> None:
     atomic_write(bundle / "message.eml", raw)
@@ -491,24 +618,45 @@ def write_final_artifacts(
         bundle / "gmail-request.json",
         (json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"),
     )
-    if reply_metadata is not None:
-        reply_metadata = {"render_digest": digest, **reply_metadata}
+    if read_manifest(bundle).get("delivery") == "draft":
+        draft_request = json.dumps(
+            {"message": request},
+            separators=(",", ":"),
+        ) + "\n"
+        atomic_write(
+            bundle / "gmail-draft-request.json",
+            draft_request.encode("utf-8"),
+        )
+    if preparation_metadata is not None:
+        preparation_metadata = {"render_digest": digest, **preparation_metadata}
         atomic_write(
             bundle / "reply.json",
-            (json.dumps(reply_metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+            (json.dumps(preparation_metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
         )
 
 
-def prepared_reply_is_current(bundle: Path, digest: str) -> bool:
+def prepared_message_is_current(bundle: Path, digest: str) -> bool:
     try:
+        manifest = read_manifest(bundle)
         state = json.loads((bundle / "reply.json").read_text(encoding="utf-8"))
         raw = (bundle / "message.eml").read_bytes()
         request = json.loads((bundle / "gmail-request.json").read_text(encoding="utf-8"))
-        return (
+        operation = "reply" if manifest.get("reply_to_message_id") is not None else "forward"
+        message_id = manifest.get("reply_to_message_id") or manifest.get("forward_message_id")
+        if not (
             state.get("render_digest") == digest
+            and state.get("operation") == operation
+            and state.get("gmail_message_id") == message_id
             and request.get("threadId") == state.get("thread_id")
             and decode_base64url(request["raw"]) == raw
-        )
+        ):
+            return False
+        if manifest.get("delivery") == "draft":
+            draft_request = json.loads(
+                (bundle / "gmail-draft-request.json").read_text(encoding="utf-8")
+            )
+            return draft_request.get("message") == request
+        return True
     except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return False
 
@@ -517,7 +665,7 @@ def prepare_script(bundle: Path, manifest: dict[str, Any]) -> bytes:
     params = json.dumps(
         {
             "userId": "me",
-            "id": manifest["reply_to_message_id"],
+            "id": manifest.get("reply_to_message_id") or manifest.get("forward_message_id"),
             "format": "raw",
         },
         separators=(",", ":"),
@@ -543,22 +691,28 @@ def render(bundle: Path) -> None:
     mailboxes = validate_manifest(manifest)
     digest = local_digest(bundle, manifest)
     preparation = bundle / "prepare.sh"
-    if manifest.get("reply_to_message_id") is not None:
-        if not prepared_reply_is_current(bundle, digest):
+    if (
+        manifest.get("reply_to_message_id") is not None
+        or manifest.get("forward_message_id") is not None
+    ):
+        if not prepared_message_is_current(bundle, digest):
             remove_artifacts(bundle)
         atomic_write(preparation, prepare_script(bundle, manifest), mode=0o755)
         return
     preparation.unlink(missing_ok=True)
     remove_artifacts(bundle)
-    raw, request, _reply_metadata = build_message(bundle, manifest, mailboxes, None)
+    raw, request, _preparation_metadata = build_message(bundle, manifest, mailboxes, None)
     write_final_artifacts(bundle, raw, request, None, digest)
 
 
 def prepare(bundle: Path, response_path: Path) -> None:
     manifest = read_manifest(bundle)
     mailboxes = validate_manifest(manifest)
-    if manifest.get("reply_to_message_id") is None:
-        raise ValueError("preparation is only required for replies")
+    if (
+        manifest.get("reply_to_message_id") is None
+        and manifest.get("forward_message_id") is None
+    ):
+        raise ValueError("preparation is only required for replies and forwards")
     digest = local_digest(bundle, manifest)
     remove_artifacts(bundle)
     try:
@@ -566,8 +720,8 @@ def prepare(bundle: Path, response_path: Path) -> None:
     except json.JSONDecodeError as error:
         raise ValueError(f"invalid Gmail API response: {error}") from error
     context = reply_context(response)
-    raw, request, reply_metadata = build_message(bundle, manifest, mailboxes, context)
-    write_final_artifacts(bundle, raw, request, reply_metadata, digest)
+    raw, request, preparation_metadata = build_message(bundle, manifest, mailboxes, context)
+    write_final_artifacts(bundle, raw, request, preparation_metadata, digest)
 
 
 def main() -> None:
