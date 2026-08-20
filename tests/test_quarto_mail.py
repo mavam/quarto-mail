@@ -320,7 +320,7 @@ class QuartoMailTests(unittest.TestCase):
         self.assertEqual(parsed["Subject"], "Re: Original üpdate")
         self.assertEqual(parsed["In-Reply-To"], "<original-123@example.com>")
         self.assertEqual(
-            parsed["References"],
+            str(parsed["References"]).strip(),
             "<root@example.com> <previous@example.com> <original-123@example.com>",
         )
         self.assertEqual(parsed["To"], "Original Sender <sender@example.com>")
