@@ -547,6 +547,9 @@ local function render_document(document, source, source_directory, bundle_direct
       "mail-profiles.identities." .. identity_name .. ".indent"
     )
   end
+  if from_name == nil then
+    from_name = resolved_identity
+  end
   if signature_name ~= nil then
     local signature = profile(profiles, "signatures", signature_name)
     signature_plain = profile_content(

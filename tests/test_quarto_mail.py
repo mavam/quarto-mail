@@ -320,7 +320,7 @@ class QuartoMailTests(unittest.TestCase):
         self.assertEqual(parsed["Subject"], "Re: Original üpdate")
         self.assertEqual(parsed["In-Reply-To"], "<original-123@example.com>")
         self.assertEqual(
-            parsed["References"],
+            str(parsed["References"]).strip(),
             "<root@example.com> <previous@example.com> <original-123@example.com>",
         )
         self.assertEqual(parsed["To"], "Original Sender <sender@example.com>")
@@ -677,6 +677,29 @@ class QuartoMailTests(unittest.TestCase):
 
         self.assertEqual(message.manifest["account"], "named-work")
         self.assertIn("--account 'named-work'", message.command)
+
+    def test_uses_identity_as_default_sender_name(self) -> None:
+        message = self.render(
+            "work",
+            lambda source: source.replace(
+                "mail:\n",
+                "mail-profiles:\n"
+                "  senders:\n"
+                "    work:\n"
+                "      account: work@example.com\n"
+                "      from: alias@example.com\n"
+                "  identities:\n"
+                "    work:\n"
+                "      name: Alex Example\n"
+                "  signatures:\n"
+                "    work:\n"
+                "      plain: Alex Example\n"
+                "mail:\n",
+            ),
+        )
+
+        self.assertEqual(message.manifest["from_name"], "Alex Example")
+        self.assertEqual(parse_message(message.eml)["From"], "Alex Example <alias@example.com>")
 
     def test_rejects_invalid_mailboxes_before_reply_preparation(self) -> None:
         cases = {

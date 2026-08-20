@@ -54,7 +54,9 @@ mail-profiles:
 
 The `account` selects an account authenticated with `gog`. The `from` address
 may be the account address or a configured Gmail alias. The optional `name`
-sets the MIME display name.
+sets the MIME display name. When you omit `name`, Quarto Mail uses the selected
+sign-off identity's name. Without either value, the `From` header contains only
+the email address.
 
 ### Write a message
 
@@ -372,7 +374,10 @@ mail-profiles:
       indent: 4
 ```
 
-The identity `indent` is an optional non-negative number of spaces.
+The identity `indent` is an optional non-negative number of spaces. When a
+sender omits `name`, its display name defaults to the identity selected by the
+message. An explicit sender `name` takes precedence, which keeps the `From`
+header stable when messages use different sign-off identities.
 
 ### Signatures
 
