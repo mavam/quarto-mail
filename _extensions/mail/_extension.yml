@@ -21,3 +21,8 @@ contributes:
       standalone: false
       writer: gog.lua
       output-ext: sh
+    eml:
+      validate-yaml: false
+      standalone: false
+      writer: eml.lua
+      output-ext: eml

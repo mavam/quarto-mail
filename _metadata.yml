@@ -6,6 +6,7 @@ mail-profiles:
     work:
       account: work@example.com
       from: alias@example.com
+      name: Alex Example
   identities:
     personal:
       name: Alex

@@ -244,22 +244,73 @@ local function source_path()
   return pandoc.path.normalize(source)
 end
 
+local function resolve_file(path, directory, label)
+  local resolved = path
+  if not absolute_path(resolved) then
+    resolved = pandoc.path.join({ directory, resolved })
+  end
+  resolved = pandoc.path.normalize(resolved)
+  local handle = io.open(resolved, "rb")
+  if handle == nil then
+    fail(label .. " does not exist or is not readable: " .. path)
+  end
+  handle:close()
+  return resolved
+end
+
 local function resolve_attachments(attachments, directory)
   local result = {}
   for _, attachment in ipairs(attachments) do
-    local path = attachment
-    if not absolute_path(path) then
-      path = pandoc.path.join({ directory, path })
-    end
-    path = pandoc.path.normalize(path)
-    local handle = io.open(path, "rb")
-    if handle == nil then
-      fail("attachment does not exist or is not readable: " .. attachment)
-    end
-    handle:close()
-    table.insert(result, path)
+    table.insert(result, resolve_file(attachment, directory, "attachment"))
   end
   return result
+end
+
+local image_types = {
+  png = "image/png",
+  jpg = "image/jpeg",
+  jpeg = "image/jpeg",
+  gif = "image/gif",
+  webp = "image/webp",
+  svg = "image/svg+xml",
+}
+
+local function collect_inline_images(document, directory)
+  local images = {}
+  local by_source = {}
+  document:walk({
+    Image = function(image)
+      local target = image.src
+      local lowered_target = target:lower()
+      if lowered_target:match("^https://") then
+        return image
+      end
+      if not absolute_path(target) and
+          (target:match("^%a[%w+.-]*:") or target:match("^//")) then
+        fail("unsupported inline image URL '" .. target .. "'; use a local path or HTTPS URL")
+      end
+      local source = resolve_file(target, directory, "inline image")
+      local extension = source:match("%.([^./\\]+)$")
+      extension = extension ~= nil and extension:lower() or ""
+      local content_type = image_types[extension]
+      if content_type == nil then
+        fail("unsupported inline image format for '" .. target ..
+          "'; supported formats are PNG, JPEG, GIF, WebP, and SVG")
+      end
+      if by_source[source] == nil then
+        local item = {
+          source = source,
+          filename = pandoc.path.filename(source),
+          content_type = content_type,
+          content_id = "image-" .. tostring(#images + 1) .. "@quarto-mail",
+        }
+        by_source[source] = item
+        table.insert(images, item)
+      end
+      return image
+    end,
+  })
+  return images, by_source
 end
 
 local function text_inlines(text)
@@ -338,11 +389,24 @@ local function json_array(values)
   return "[" .. table.concat(encoded, ", ") .. "]"
 end
 
+local function inline_images_json(images)
+  local encoded = {}
+  for _, image in ipairs(images) do
+    table.insert(encoded, "{\"source\": " .. json_string(image.source) ..
+      ", \"filename\": " .. json_string(image.filename) ..
+      ", \"content_type\": " .. json_string(image.content_type) ..
+      ", \"content_id\": " .. json_string(image.content_id) .. "}")
+  end
+  return "[" .. table.concat(encoded, ", ") .. "]"
+end
+
 local function manifest_json(values)
   local subject = values.subject == nil and "null" or json_string(values.subject)
   local fields = {
+    '  "source": ' .. json_string(values.source),
     '  "account": ' .. json_string(values.account),
     '  "from": ' .. json_string(values.from),
+    '  "from_name": ' .. (values.from_name == nil and "null" or json_string(values.from_name)),
     '  "to": ' .. json_array(values.to),
     '  "cc": ' .. json_array(values.cc),
     '  "bcc": ' .. json_array(values.bcc),
@@ -350,6 +414,7 @@ local function manifest_json(values)
     '  "body_text": "body.txt"',
     '  "body_html": "body.html"',
     '  "attachments": ' .. json_array(values.attachments),
+    '  "inline_images": ' .. inline_images_json(values.inline_images),
   }
   if values.reply_to_message_id ~= nil then
     table.insert(fields, '  "reply_to_message_id": ' .. json_string(values.reply_to_message_id))
@@ -375,6 +440,19 @@ local function read_file(path)
   local contents = handle:read("*a")
   handle:close()
   return contents
+end
+
+local final_artifacts = {
+  "message.eml",
+  "gmail-request.json",
+  "reply.json",
+  "prepare.sh",
+}
+
+local function remove_final_artifacts(directory)
+  for _, name in ipairs(final_artifacts) do
+    os.remove(pandoc.path.join({ directory, name }))
+  end
 end
 
 local function source_mail_metadata(source)
@@ -404,6 +482,26 @@ local function render_block_html(block)
     "html",
     { wrap_text = "none" }
   ):gsub("\n+$", "")
+end
+
+local function transport_blocks(message_blocks, inline_images, source_directory)
+  return pandoc.Pandoc(message_blocks):walk({
+    Image = function(image)
+      if not image.src:lower():match("^https://") then
+        local source = image.src
+        if not absolute_path(source) then
+          source = pandoc.path.join({ source_directory, source })
+        end
+        source = pandoc.path.normalize(source)
+        local inline_image = inline_images[source]
+        if inline_image == nil then
+          fail("cannot match inline image to its resolved source: " .. image.src)
+        end
+        image.src = "cid:" .. inline_image.content_id
+      end
+      return image
+    end,
+  }).blocks
 end
 
 local function render_email_html(
@@ -466,9 +564,7 @@ local function render_email_html(
   return "<div>\n" .. table.concat(html, "\n") .. "\n</div>\n"
 end
 
-function Pandoc(document)
-  local source = source_path()
-  local source_directory = pandoc.path.directory(source)
+local function render_document(document, source, source_directory, bundle_directory)
   local mail = source_mail_metadata(source)
   if mail == nil or type(mail) ~= "table" then
     fail("missing required metadata field 'mail'")
@@ -515,6 +611,11 @@ function Pandoc(document)
     "mail-profiles.senders." .. sender_name .. ".from",
     true
   )
+  local from_name = profile_scalar(
+    sender.name,
+    "mail-profiles.senders." .. sender_name .. ".name",
+    false
+  )
   validate_email_address(account, "mail-profiles.senders." .. sender_name .. ".account")
   validate_email_address(from, "mail-profiles.senders." .. sender_name .. ".from")
   local resolved_identity = nil
@@ -552,9 +653,6 @@ function Pandoc(document)
   end
 
   document = document:walk({
-    Image = function()
-      fail("inline images are not supported")
-    end,
     Div = function(div)
       if div_has_class(div, "hidden") and #div.content == 0 then
         return {}
@@ -564,6 +662,7 @@ function Pandoc(document)
   })
 
   local message_blocks = document.blocks
+  local inline_images, inline_images_by_source = collect_inline_images(document, source_directory)
   local blocks = {}
   if opening ~= nil then
     table.insert(blocks, pandoc.Div({ pandoc.Para(text_inlines(opening)) }))
@@ -582,9 +681,6 @@ function Pandoc(document)
   end
   document.blocks = blocks
 
-  local filename = pandoc.path.filename(source)
-  local stem = filename:gsub("%.[^%.]+$", "")
-  local bundle_directory = pandoc.path.join({ source_directory, stem .. ".mail" })
   local resolved_attachments = resolve_attachments(attachments, source_directory)
 
   local identity_text = nil
@@ -617,7 +713,7 @@ function Pandoc(document)
   })
   local body_text = pandoc.write(text_document, "plain", { wrap_text = "none" })
   local body_html = render_email_html(
-    message_blocks,
+    transport_blocks(message_blocks, inline_images_by_source, source_directory),
     opening,
     closing,
     resolved_identity,
@@ -627,13 +723,16 @@ function Pandoc(document)
     signature_html
   )
   local values = {
+    source = source,
     account = account,
     from = from,
+    from_name = from_name,
     to = to,
     cc = cc,
     bcc = bcc,
     subject = subject,
     attachments = resolved_attachments,
+    inline_images = inline_images,
     reply_to_message_id = reply_to_message_id,
     quote = quote,
   }
@@ -642,6 +741,48 @@ function Pandoc(document)
   write_file(pandoc.path.join({ bundle_directory, "body.txt" }), body_text)
   write_file(pandoc.path.join({ bundle_directory, "body.html" }), body_html)
   write_file(pandoc.path.join({ bundle_directory, "manifest.json" }), manifest_json(values))
+  local script_directory = pandoc.path.directory(PANDOC_SCRIPT_FILE)
+  local ok, code, _output, error_output = pcall(
+    pandoc.system.command,
+    "python3",
+    {
+      pandoc.path.join({ script_directory, "mime.py" }),
+      "render",
+      bundle_directory,
+    }
+  )
+  if not ok then
+    remove_final_artifacts(bundle_directory)
+    fail("cannot run Python 3 MIME builder: " .. tostring(code))
+  end
+  if code ~= false and code ~= 0 then
+    remove_final_artifacts(bundle_directory)
+    local detail = error_output ~= nil and error_output:gsub("%s+$", "") or ""
+    if detail == "" then
+      detail = "exit status " .. tostring(code)
+    end
+    fail("MIME builder failed: " .. detail)
+  end
 
   return document
+end
+
+function Pandoc(document)
+  local source = source_path()
+  local source_directory = pandoc.path.directory(source)
+  local filename = pandoc.path.filename(source)
+  local stem = filename:gsub("%.[^%.]+$", "")
+  local bundle_directory = pandoc.path.join({ source_directory, stem .. ".mail" })
+  local succeeded, result = pcall(
+    render_document,
+    document,
+    source,
+    source_directory,
+    bundle_directory
+  )
+  if not succeeded then
+    remove_final_artifacts(bundle_directory)
+    error(result, 0)
+  end
+  return result
 end
