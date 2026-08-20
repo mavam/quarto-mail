@@ -8,7 +8,7 @@ formats:
       properties:
         senders:
           type: object
-          description: Named sender profiles with account, from address, and optional display name.
+          description: Named sender profiles with account, from address, and an optional display name that defaults to the selected sign-off identity.
         identities:
           type: object
           description: Named sign-off identity profiles.
