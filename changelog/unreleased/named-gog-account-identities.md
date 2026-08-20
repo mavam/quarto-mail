@@ -3,6 +3,8 @@ title: Named gog account identities
 type: change
 authors:
   - mavam
+prs:
+  - 2
 created: 2026-08-20T05:47:46.593044Z
 ---
 
