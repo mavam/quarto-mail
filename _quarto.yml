@@ -1,2 +1,6 @@
 project:
   type: default
+  render:
+    - "*.qmd"
+    - "!changelog/"
+    - "!tests/"
