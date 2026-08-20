@@ -11,7 +11,9 @@ Install Lefthook once per clone:
 lefthook install
 ```
 
-Pushing runs the quality gates automatically. No need to run checks manually.
+Pushing runs lightweight validation automatically. GitHub Actions runs the full
+test suite for pull requests and changes to `main`. No need to run checks
+manually.
 
 ## Releasing
 

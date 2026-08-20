@@ -1,8 +1,6 @@
 pre-push:
   parallel: true
   commands:
-    tests:
-      run: python3 -m unittest discover -s tests -v
     snippets:
       run: python3 -m json.tool _extensions/mail/_snippets.json >/dev/null
     changelog-validate:

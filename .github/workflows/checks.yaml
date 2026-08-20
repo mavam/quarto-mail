@@ -1,0 +1,37 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Validate snippets
+        run: python3 -m json.tool _extensions/mail/_snippets.json >/dev/null
+
+      - name: Validate changelog
+        run: uvx tenzir-ship validate
+
+      - name: Run tests
+        run: python3 -m unittest discover -s tests -v
