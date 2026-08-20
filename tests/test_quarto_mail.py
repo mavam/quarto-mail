@@ -57,6 +57,7 @@ class RenderedMessage:
         if transform is not None:
             source = transform(source)
         self.source.write_text(source, encoding="utf-8")
+        os.utime(self.source, (1_700_000_000, 1_700_000_000))
         self.bundle = self.source.with_suffix(".mail")
         self.preview = self.source.with_suffix(".html")
         self.support = self.source.with_name(f"{self.source.stem}_files")
@@ -155,6 +156,11 @@ class QuartoMailTests(unittest.TestCase):
         self.assertEqual(manifest["from_name"], "Alex Example")
         self.assertEqual(manifest["to"], ["Customer Example <customer@example.com>"])
         self.assertEqual(manifest["attachments"], [attachment])
+        self.assertEqual(manifest["cc"], ["Colleague Example <colleague@example.com>"])
+        self.assertEqual(manifest["bcc"], ["Archive Example <archive@example.com>"])
+        self.assertNotIn("quote", manifest)
+        manifest_bytes = (message.bundle / "manifest.json").read_bytes()
+        self.assertIn("Project üpdate".encode(), manifest_bytes)
         self.assertEqual(
             manifest["inline_images"],
             [{
@@ -235,10 +241,12 @@ class QuartoMailTests(unittest.TestCase):
         self.assertEqual(eml_output.read_bytes(), message.eml)
         first_eml = message.eml
         first_request = (message.bundle / "gmail-request.json").read_bytes()
+        first_manifest = (message.bundle / "manifest.json").read_bytes()
         result = run_quarto(str(message.source), "--quiet")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(message.eml, first_eml)
         self.assertEqual((message.bundle / "gmail-request.json").read_bytes(), first_request)
+        self.assertEqual((message.bundle / "manifest.json").read_bytes(), first_manifest)
 
         source_files = list((ROOT / "_extensions" / "mail").glob("*")) + [ROOT / "README.md"]
         for path in source_files:
@@ -262,7 +270,7 @@ class QuartoMailTests(unittest.TestCase):
         message = self.render("reply")
         image_path = FIXTURES / "inline.png"
         attachment_path = FIXTURES / "attachment~path~.txt"
-        self.assertIsNone(message.manifest["subject"])
+        self.assertNotIn("subject", message.manifest)
         self.assertEqual(message.manifest["reply_to_message_id"], "message-123")
         self.assertTrue(message.manifest["quote"])
         self.assertIn("gmail.users.messages.send", message.command)
@@ -430,6 +438,75 @@ class QuartoMailTests(unittest.TestCase):
         self.assertFalse((message.bundle / "message.eml").exists())
         self.assertFalse((message.bundle / "gmail-request.json").exists())
         self.assertFalse((message.bundle / "reply.json").exists())
+
+    def test_accepts_quoted_commas_and_unicode_display_names(self) -> None:
+        message = self.render(
+            "work",
+            lambda source: source.replace(
+                "Customer Example <customer@example.com>",
+                "'\"Müller, Élodie\" <customer@example.com>'",
+            ),
+        )
+
+        parsed = parse_message(message.eml)
+        self.assertEqual(parsed["To"], '"Müller, Élodie" <customer@example.com>')
+
+    def test_accepts_named_gog_account_identity(self) -> None:
+        message = self.render(
+            "work",
+            lambda source: source.replace(
+                "mail:\n",
+                "mail-profiles:\n"
+                "  senders:\n"
+                "    work:\n"
+                "      account: named-work\n"
+                "      from: alias@example.com\n"
+                "      name: Alex Example\n"
+                "mail:\n",
+            ).replace("  identity: work\n", "").replace("  signature: work\n", ""),
+        )
+
+        self.assertEqual(message.manifest["account"], "named-work")
+        self.assertIn("--account 'named-work'", message.command)
+
+    def test_rejects_invalid_mailboxes_before_reply_preparation(self) -> None:
+        cases = {
+            "multiple mailboxes": "first@example.com, second@example.com",
+            "malformed mailbox": "not-an-address",
+            "header injection": "customer@example.com\\n    Bcc: attacker@example.com",
+        }
+        for label, mailbox in cases.items():
+            with self.subTest(label=label):
+                source = ROOT / f".quarto-mail-invalid-{uuid.uuid4()}.qmd"
+                bundle = source.with_suffix(".mail")
+                preview = source.with_suffix(".html")
+                support = source.with_name(f"{source.stem}_files")
+                self.addCleanup(source.unlink, missing_ok=True)
+                self.addCleanup(preview.unlink, missing_ok=True)
+                self.addCleanup(shutil.rmtree, bundle, True)
+                self.addCleanup(shutil.rmtree, support, True)
+                contents = (FIXTURES / "reply.qmd").read_text(encoding="utf-8")
+                contents = contents.replace(
+                    "Original Sender <sender@example.com>",
+                    mailbox,
+                ).replace(
+                    "- attachment~path~.txt",
+                    "- tests/fixtures/attachment~path~.txt",
+                ).replace(
+                    "](inline.png)",
+                    "](tests/fixtures/inline.png)",
+                )
+                source.write_text(contents, encoding="utf-8")
+
+                result = run_quarto(str(source))
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertRegex(
+                    result.stdout + result.stderr,
+                    r"invalid mailbox|must (?:contain single-line values|not contain empty values)",
+                )
+                self.assertFalse((bundle / "prepare.sh").exists())
+                self.assertFalse((bundle / "message.eml").exists())
 
     def test_removes_stale_artifacts_after_failed_render(self) -> None:
         message = self.render("work")

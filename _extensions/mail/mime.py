@@ -12,10 +12,11 @@ import re
 import shlex
 import sys
 import tempfile
+from email.headerregistry import Address, HeaderRegistry
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.policy import SMTP, default
-from email.utils import formataddr, formatdate
+from email.utils import formatdate
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ CONTENT_TYPES = {
 FINAL_ARTIFACTS = ("message.eml", "gmail-request.json", "reply.json")
 MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]+>")
 CID_REFERENCE_END = r"(?=$|[\s\"'(),<>])"
+HEADER_REGISTRY = HeaderRegistry()
 
 
 class HTMLTextExtractor(HTMLParser):
@@ -89,6 +91,72 @@ def read_manifest(bundle: Path) -> dict[str, Any]:
         raise ValueError(f"missing rendered manifest: {bundle / 'manifest.json'}") from error
     except json.JSONDecodeError as error:
         raise ValueError(f"invalid rendered manifest: {error}") from error
+
+
+def parse_mailbox(value: Any, field: str) -> Address:
+    if not isinstance(value, str) or value == "":
+        raise ValueError(f"manifest field '{field}' must contain a non-empty mailbox")
+    if "\r" in value or "\n" in value:
+        raise ValueError(f"manifest field '{field}' must not contain newlines")
+    try:
+        header = HEADER_REGISTRY("To", value)
+    except Exception as error:
+        raise ValueError(f"invalid mailbox {value!r} in manifest field '{field}'") from error
+    addresses = header.addresses
+    if header.defects or len(addresses) != 1:
+        raise ValueError(f"invalid mailbox {value!r} in manifest field '{field}'")
+    address = addresses[0]
+    if not address.username or not address.domain:
+        raise ValueError(f"invalid mailbox {value!r} in manifest field '{field}'")
+    return address
+
+
+def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    required_strings = ("source", "account", "from", "body_text", "body_html")
+    for field in required_strings:
+        value = manifest.get(field)
+        if not isinstance(value, str) or value == "":
+            raise ValueError(f"manifest field '{field}' must be a non-empty string")
+        if "\r" in value or "\n" in value:
+            raise ValueError(f"manifest field '{field}' must not contain newlines")
+
+    from_address = parse_mailbox(manifest["from"], "from")
+    from_name = manifest.get("from_name")
+    if from_name is not None:
+        if not isinstance(from_name, str) or from_name == "" or "\r" in from_name or "\n" in from_name:
+            raise ValueError("manifest field 'from_name' must be a non-empty single-line string")
+        from_address = Address(
+            display_name=from_name,
+            username=from_address.username,
+            domain=from_address.domain,
+        )
+
+    parsed: dict[str, Any] = {"from": from_address}
+    for field in ("to", "cc", "bcc"):
+        values = manifest.get(field)
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise ValueError(f"manifest field '{field}' must be a list of mailboxes")
+        if field == "to" and not values:
+            raise ValueError("manifest field 'to' must contain at least one mailbox")
+        parsed[field] = [
+            parse_mailbox(value, f"{field}[{index}]")
+            for index, value in enumerate(values)
+        ]
+
+    for field in ("attachments", "inline_images"):
+        if not isinstance(manifest.get(field), list):
+            raise ValueError(f"manifest field '{field}' must be a list")
+    subject = manifest.get("subject")
+    reply_id = manifest.get("reply_to_message_id")
+    if subject is not None and (not isinstance(subject, str) or "\r" in subject or "\n" in subject):
+        raise ValueError("manifest field 'subject' must be a single-line string")
+    if reply_id is None and subject is None:
+        raise ValueError("manifest field 'subject' is required for a new message")
+    if reply_id is not None and (not isinstance(reply_id, str) or reply_id == "" or "\r" in reply_id or "\n" in reply_id):
+        raise ValueError("manifest field 'reply_to_message_id' must be a non-empty single-line string")
+    if manifest.get("quote", False) not in (True, False):
+        raise ValueError("manifest field 'quote' must be a boolean")
+    return parsed
 
 
 def update_digest(digest: Any, label: str, value: bytes) -> None:
@@ -301,15 +369,16 @@ def quote_bodies(plain: str, html_body: str, context: dict[str, Any]) -> tuple[s
 def build_message(
     bundle: Path,
     manifest: dict[str, Any],
+    mailboxes: dict[str, Any],
     context: dict[str, Any] | None,
 ) -> tuple[bytes, dict[str, str], dict[str, Any] | None]:
     message = EmailMessage(policy=SMTP)
-    message["From"] = formataddr((manifest.get("from_name") or "", manifest["from"]))
-    message["To"] = ", ".join(manifest["to"])
-    if manifest["cc"]:
-        message["Cc"] = ", ".join(manifest["cc"])
-    if manifest["bcc"]:
-        message["Bcc"] = ", ".join(manifest["bcc"])
+    message["From"] = mailboxes["from"]
+    message["To"] = mailboxes["to"]
+    if mailboxes["cc"]:
+        message["Cc"] = mailboxes["cc"]
+    if mailboxes["bcc"]:
+        message["Bcc"] = mailboxes["bcc"]
 
     thread_id: str | None = None
     reply_metadata: dict[str, Any] | None = None
@@ -321,7 +390,7 @@ def build_message(
         thread_id = context["thread_id"]
         message["In-Reply-To"] = context["message_id"]
         message["References"] = " ".join(context["references"])
-        subject = manifest["subject"] if manifest["subject"] is not None else reply_subject(context["subject"])
+        subject = manifest.get("subject") if manifest.get("subject") is not None else reply_subject(context["subject"])
         reply_metadata = {
             "gmail_message_id": manifest["reply_to_message_id"],
             "thread_id": thread_id,
@@ -471,6 +540,7 @@ def prepare_script(bundle: Path, manifest: dict[str, Any]) -> bytes:
 
 def render(bundle: Path) -> None:
     manifest = read_manifest(bundle)
+    mailboxes = validate_manifest(manifest)
     digest = local_digest(bundle, manifest)
     preparation = bundle / "prepare.sh"
     if manifest.get("reply_to_message_id") is not None:
@@ -480,12 +550,13 @@ def render(bundle: Path) -> None:
         return
     preparation.unlink(missing_ok=True)
     remove_artifacts(bundle)
-    raw, request, _reply_metadata = build_message(bundle, manifest, None)
+    raw, request, _reply_metadata = build_message(bundle, manifest, mailboxes, None)
     write_final_artifacts(bundle, raw, request, None, digest)
 
 
 def prepare(bundle: Path, response_path: Path) -> None:
     manifest = read_manifest(bundle)
+    mailboxes = validate_manifest(manifest)
     if manifest.get("reply_to_message_id") is None:
         raise ValueError("preparation is only required for replies")
     digest = local_digest(bundle, manifest)
@@ -495,7 +566,7 @@ def prepare(bundle: Path, response_path: Path) -> None:
     except json.JSONDecodeError as error:
         raise ValueError(f"invalid Gmail API response: {error}") from error
     context = reply_context(response)
-    raw, request, reply_metadata = build_message(bundle, manifest, context)
+    raw, request, reply_metadata = build_message(bundle, manifest, mailboxes, context)
     write_final_artifacts(bundle, raw, request, reply_metadata, digest)
 
 
