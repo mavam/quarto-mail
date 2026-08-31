@@ -438,6 +438,38 @@ class QuartoMailTests(unittest.TestCase):
         self.assertFalse((message.bundle / "gmail-request.json").exists())
         self.assertFalse((message.bundle / "reply.json").exists())
 
+    def test_sanitizes_quoted_inline_image_filenames(self) -> None:
+        message = self.render("reply")
+        response = json.loads(GMAIL_RESPONSE.read_text(encoding="utf-8"))
+        raw = base64.urlsafe_b64decode(response["raw"] + "=" * (-len(response["raw"]) % 4))
+        raw = raw.replace(
+            b'filename="original-inline.png"',
+            b"filename*=utf-8''Outlook-Logo%0A%0ADesc.png",
+        )
+        response["raw"] = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+        response_path = Path(tempfile.mkstemp(prefix="quarto-mail-response-", suffix=".json")[1])
+        self.addCleanup(response_path.unlink, missing_ok=True)
+        response_path.write_text(json.dumps(response), encoding="utf-8")
+
+        environment, _log = self.fake_gog()
+        environment["FAKE_GMAIL_RESPONSE"] = str(response_path)
+        result = subprocess.run(
+            ["/bin/sh", str(message.bundle / "prepare.sh")],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        parsed = parse_message(message.eml)
+        quoted_inline = next(
+            part
+            for part in parsed.walk()
+            if str(part.get("Content-ID", "")).startswith("<quoted-1-")
+        )
+        self.assertEqual(quoted_inline.get_filename(), "Outlook-Logo Desc.png")
+
     def test_forwards_messages_and_creates_or_updates_drafts(self) -> None:
         message = self.render(
             "reply",
@@ -538,7 +570,9 @@ class QuartoMailTests(unittest.TestCase):
         self.assertIn("gmail.users.drafts.update", updated.command)
         self.assertIn("draft-123", updated.command)
 
-    def test_forwards_filename_attachments_without_content_disposition(self) -> None:
+    def test_forwards_sanitized_filename_attachments_without_content_disposition(
+        self,
+    ) -> None:
         message = self.render(
             "reply",
             lambda source: source.replace(
@@ -582,12 +616,14 @@ class QuartoMailTests(unittest.TestCase):
         )
         original.make_mixed()
         original.attach(attachment)
+        raw = original.as_bytes().replace(
+            b'name="without-disposition.bin"',
+            b"name*=utf-8''Outlook-Report%0A%0ADesc.bin",
+        )
         response = {
             "id": "message-123",
             "threadId": "thread-attachments",
-            "raw": base64.urlsafe_b64encode(original.as_bytes())
-            .rstrip(b"=")
-            .decode("ascii"),
+            "raw": base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii"),
         }
         response_path = message.bundle / "attachment-response.json"
         response_path.write_text(json.dumps(response), encoding="utf-8")
@@ -627,7 +663,7 @@ class QuartoMailTests(unittest.TestCase):
         )
         self.assertEqual(related_part.get_content_disposition(), "inline")
         self.assertRegex(str(related_part["Content-ID"]), r"^<quoted-1-")
-        self.assertEqual(attachment_part.get_filename(), "without-disposition.bin")
+        self.assertEqual(attachment_part.get_filename(), "Outlook-Report Desc.bin")
         self.assertEqual(attachment_part.get_content_disposition(), "attachment")
 
     def test_derives_reply_all_recipients(self) -> None:
