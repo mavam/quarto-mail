@@ -438,6 +438,38 @@ class QuartoMailTests(unittest.TestCase):
         self.assertFalse((message.bundle / "gmail-request.json").exists())
         self.assertFalse((message.bundle / "reply.json").exists())
 
+    def test_sanitizes_quoted_inline_image_filenames(self) -> None:
+        message = self.render("reply")
+        response = json.loads(GMAIL_RESPONSE.read_text(encoding="utf-8"))
+        raw = base64.urlsafe_b64decode(response["raw"] + "=" * (-len(response["raw"]) % 4))
+        raw = raw.replace(
+            b'filename="original-inline.png"',
+            b"filename*=utf-8''Outlook-Logo%0A%0ADesc.png",
+        )
+        response["raw"] = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+        response_path = Path(tempfile.mkstemp(prefix="quarto-mail-response-", suffix=".json")[1])
+        self.addCleanup(response_path.unlink, missing_ok=True)
+        response_path.write_text(json.dumps(response), encoding="utf-8")
+
+        environment, _log = self.fake_gog()
+        environment["FAKE_GMAIL_RESPONSE"] = str(response_path)
+        result = subprocess.run(
+            ["/bin/sh", str(message.bundle / "prepare.sh")],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        parsed = parse_message(message.eml)
+        quoted_inline = next(
+            part
+            for part in parsed.walk()
+            if str(part.get("Content-ID", "")).startswith("<quoted-1-")
+        )
+        self.assertEqual(quoted_inline.get_filename(), "Outlook-Logo Desc.png")
+
     def test_forwards_messages_and_creates_or_updates_drafts(self) -> None:
         message = self.render(
             "reply",

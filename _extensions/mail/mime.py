@@ -283,6 +283,12 @@ def reply_subject(subject: str | None) -> str:
     return f"Re: {original}".rstrip()
 
 
+def sanitize_mime_filename(filename: str | None) -> str | None:
+    if filename is None:
+        return None
+    return re.sub(r"[\r\n]+", " ", filename).strip()
+
+
 def reply_context(response: dict[str, Any]) -> dict[str, Any]:
     if "raw" not in response and isinstance(response.get("result"), dict):
         response = response["result"]
@@ -341,7 +347,7 @@ def reply_context(response: dict[str, Any]) -> dict[str, Any]:
             quoted_inline_images.append({
                 "content_id": rewritten_content_id,
                 "content_type": part.get_content_type(),
-                "filename": part.get_filename(),
+                "filename": sanitize_mime_filename(part.get_filename()),
                 "payload": payload,
             })
     attachments: list[dict[str, Any]] = []
@@ -353,7 +359,7 @@ def reply_context(response: dict[str, Any]) -> dict[str, Any]:
                 collect_attachments(child, related)
             return
         disposition = part.get_content_disposition()
-        filename = part.get_filename()
+        filename = sanitize_mime_filename(part.get_filename())
         if disposition != "attachment" and (
             filename is None or disposition == "inline" or inside_related
         ):
