@@ -3,6 +3,8 @@ title: Reliable replies to Outlook messages
 type: bugfix
 authors:
   - mavam
+prs:
+  - 7
 created: 2026-08-31T16:13:26.236239Z
 ---
 
