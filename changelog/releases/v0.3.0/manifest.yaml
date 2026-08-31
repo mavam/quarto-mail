@@ -1,0 +1,9 @@
+created: 2026-08-31
+title: Compose and deliver complete Gmail messages
+intro: >-
+  Quarto Mail now creates self-contained MIME messages for new mail, replies, reply-all,
+  forwards, and Gmail drafts. It also improves sender identities and makes replies
+  to externally generated messages more reliable.
+source:
+  mode: sync-stable-queue
+  previous_stable: v0.2.1
