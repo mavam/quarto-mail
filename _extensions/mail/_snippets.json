@@ -2,9 +2,9 @@
   "Mail format setup": {
     "prefix": "format",
     "body": [
-      "format: mail-html"
+      "format: mail-gog"
     ],
-    "description": "Render a deterministic, transport-neutral mail bundle."
+    "description": "Render a complete approval preview and a delivery script."
   },
   "Plain text output": {
     "prefix": "format-plain",
@@ -18,7 +18,7 @@
     "body": [
       "format: mail-gog"
     ],
-    "description": "Render a mail bundle and emit a gog command."
+    "description": "Render a Markdown approval preview and a frozen delivery script."
   },
   "Mail message metadata": {
     "prefix": "mail",

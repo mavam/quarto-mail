@@ -352,9 +352,6 @@ end
 local final_artifacts = {
   "message.eml",
   "gmail-request.json",
-  "gmail-draft-request.json",
-  "reply.json",
-  "prepare.sh",
 }
 
 local function remove_final_artifacts(directory)
@@ -674,7 +671,6 @@ local function render_document(document, source, source_directory, bundle_direct
     "python3",
     {
       pandoc.path.join({ script_directory, "mime.py" }),
-      "render",
       bundle_directory,
     }
   )
@@ -709,6 +705,7 @@ function Pandoc(document)
   )
   if not succeeded then
     remove_final_artifacts(bundle_directory)
+    os.remove(pandoc.path.join({ source_directory, stem .. ".send.sh" }))
     error(result, 0)
   end
   return result

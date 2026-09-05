@@ -20,7 +20,7 @@ contributes:
       validate-yaml: false
       standalone: false
       writer: gog.lua
-      output-ext: sh
+      output-ext: preview.md
     eml:
       validate-yaml: false
       standalone: false

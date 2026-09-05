@@ -1,5 +1,5 @@
 ---
-format: mail-html
+format: mail-gog
 mail:
   # Sender: personal (user@example.com) or work (alias@example.com).
   sender: personal
@@ -24,10 +24,19 @@ mail:
   subject: Example subject
   # Attachment paths are relative to this file.
   attachments: []
-  # Reply-only options: set the Gmail message ID, then optionally include the
-  # original message below the reply.
+  # Reply: rendering fetches the original and preserves its Gmail thread.
+  # Delete subject to inherit it. Set quote: true to include the original body.
   # reply-to-message-id: MESSAGE_ID
   # quote: true
+  # Automatic reply-all replaces explicit To/Cc; omit it for chosen recipients.
+  # reply-all: false
+  # Forward instead of replying (mutually exclusive with reply-to-message-id).
+  # Original attachments are included unless explicitly disabled.
+  # forward-message-id: MESSAGE_ID
+  # include-original-attachments: true
+  # Delivery: send (default) or draft. Rendering never writes to Gmail.
+  # delivery: draft
+  # draft-id: EXISTING_DRAFT_ID
 ---
 
 <!--
