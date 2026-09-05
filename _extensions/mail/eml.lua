@@ -34,19 +34,7 @@ function Writer(_document, _options)
   local source = source_path()
   local stem = pandoc.path.filename(source):gsub("%.[^%.]+$", "")
   local bundle = pandoc.path.join({ pandoc.path.directory(source), stem .. ".mail" })
-  local manifest = quarto.json.decode(read_file(pandoc.path.join({ bundle, "manifest.json" })))
   local message = pandoc.path.join({ bundle, "message.eml" })
-  local handle = io.open(message, "rb")
-  if handle == nil and manifest.reply_to_message_id ~= nil then
-    fail("reply artifacts are not prepared; run " ..
-      pandoc.path.join({ bundle, "prepare.sh" }))
-  elseif handle == nil and manifest.forward_message_id ~= nil then
-    fail("forward artifacts are not prepared; run " ..
-      pandoc.path.join({ bundle, "prepare.sh" }))
-  elseif handle == nil then
-    fail("cannot read " .. message)
-  end
-  handle:close()
   local contents = read_file(message)
   if contents:sub(-2) ~= "\r\n" then
     fail("MIME message does not end with CRLF: " .. message)

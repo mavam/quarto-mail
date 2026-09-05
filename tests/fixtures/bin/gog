@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Offline Gmail transport for the render-and-send integration tests."""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+call = {"args": args}
+if "--body" in args:
+    path = Path(args[args.index("--body") + 1].removeprefix("@"))
+    call["body"] = json.loads(path.read_text())
+    call["body_path"] = str(path)
+if os.environ.get("FAKE_GOG_LOG"):
+    with Path(os.environ["FAKE_GOG_LOG"]).open("a") as log:
+        log.write(json.dumps(call) + "\n")
+if os.environ.get("FAKE_GOG_FAIL"):
+    print("synthetic Gmail failure", file=sys.stderr)
+    raise SystemExit(7)
+if "gmail.users.messages.get" in args:
+    assert "--readonly" in args
+    print(Path(os.environ["FAKE_GMAIL_RESPONSE"]).read_text())
+elif any(method in args for method in (
+    "gmail.users.messages.send", "gmail.users.drafts.create", "gmail.users.drafts.update",
+)):
+    print('{"id":"result-123","threadId":"thread-456"}')
+else:
+    raise SystemExit("unexpected gog command")

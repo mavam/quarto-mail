@@ -1,7 +1,8 @@
 # quarto-mail
 
 `quarto-mail` turns one Markdown email into reviewable plain-text and HTML
-output. Rendering never sends mail or performs network operations.
+output. Rendering may fetch originals for replies and forwards, but never sends
+mail or writes to Gmail. Only running the generated script performs delivery.
 
 ## Setup
 

@@ -1,4 +1,4 @@
-"""Build deterministic MIME artifacts and prepare Gmail API replies."""
+"""Build complete MIME artifacts, fetching original messages for replies and forwards."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import html
 import json
 import os
 import re
-import shlex
+import subprocess
 import sys
 import tempfile
 from email.headerregistry import Address, HeaderRegistry
@@ -38,7 +38,7 @@ CONTENT_TYPES = {
     ".xml": "application/xml",
     ".zip": "application/zip",
 }
-FINAL_ARTIFACTS = ("message.eml", "gmail-request.json", "gmail-draft-request.json", "reply.json")
+FINAL_ARTIFACTS = ("message.eml", "gmail-request.json", "gmail-draft-request.json")
 MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]+>")
 CID_REFERENCE_END = r"(?=$|[\s\"'(),<>])"
 HEADER_REGISTRY = HeaderRegistry()
@@ -174,24 +174,6 @@ def update_digest(digest: Any, label: str, value: bytes) -> None:
     digest.update(b"\0")
     digest.update(len(value).to_bytes(8, "big"))
     digest.update(value)
-
-
-def local_digest(bundle: Path, manifest: dict[str, Any]) -> str:
-    digest = hashlib.sha256()
-    update_digest(digest, "mime-builder", Path(__file__).read_bytes())
-    manifest_bytes = (bundle / "manifest.json").read_bytes()
-    update_digest(digest, "manifest", manifest_bytes)
-    for key in ("body_text", "body_html"):
-        path = bundle / manifest[key]
-        update_digest(digest, key, path.read_bytes())
-    source = Path(manifest["source"])
-    update_digest(digest, "source", source.read_bytes())
-    update_digest(digest, "source-mtime-ns", str(source.stat().st_mtime_ns).encode("ascii"))
-    for index, path_value in enumerate(manifest["attachments"]):
-        update_digest(digest, f"attachment-{index}", Path(path_value).read_bytes())
-    for index, image in enumerate(manifest["inline_images"]):
-        update_digest(digest, f"inline-image-{index}", Path(image["source"]).read_bytes())
-    return digest.hexdigest()
 
 
 def stable_leaf_bytes(message: EmailMessage) -> list[bytes]:
@@ -461,7 +443,7 @@ def build_message(
     manifest: dict[str, Any],
     mailboxes: dict[str, Any],
     context: dict[str, Any] | None,
-) -> tuple[bytes, dict[str, str], dict[str, Any] | None]:
+) -> tuple[bytes, dict[str, str]]:
     message = EmailMessage(policy=SMTP)
     if manifest.get("reply_all") and context is not None:
         derive_reply_all(mailboxes, context)
@@ -473,10 +455,9 @@ def build_message(
         message["Bcc"] = mailboxes["bcc"]
 
     thread_id: str | None = None
-    preparation_metadata: dict[str, Any] | None = None
     if manifest.get("reply_to_message_id") is not None:
         if context is None:
-            raise ValueError("reply preparation requires a Gmail API response")
+            raise ValueError("reply rendering requires a Gmail API response")
         if context.get("gmail_message_id") not in (None, manifest["reply_to_message_id"]):
             raise ValueError("the Gmail response does not match mail.reply-to-message-id")
         thread_id = context["thread_id"]
@@ -487,31 +468,12 @@ def build_message(
             if manifest.get("subject") is not None
             else reply_subject(context["subject"])
         )
-        preparation_metadata = {
-            "operation": "reply",
-            "gmail_message_id": manifest["reply_to_message_id"],
-            "thread_id": thread_id,
-            "message_id": context["message_id"],
-            "references": context["references"],
-            "from": context["from"],
-            "date": context["date"],
-            "subject": context["subject"],
-        }
     elif manifest.get("forward_message_id") is not None:
         if context is None:
-            raise ValueError("forward preparation requires a Gmail API response")
+            raise ValueError("forward rendering requires a Gmail API response")
         if context.get("gmail_message_id") not in (None, manifest["forward_message_id"]):
             raise ValueError("the Gmail response does not match mail.forward-message-id")
         subject = manifest.get("subject") or forward_subject(context["subject"])
-        preparation_metadata = {
-            "operation": "forward",
-            "gmail_message_id": manifest["forward_message_id"],
-            "thread_id": None,
-            "message_id": context["message_id"],
-            "from": context["from"],
-            "date": context["date"],
-            "subject": context["subject"],
-        }
     else:
         subject = manifest["subject"]
     message["Subject"] = subject
@@ -588,7 +550,7 @@ def build_message(
     request = {"raw": encode_base64url(raw)}
     if thread_id is not None:
         request["threadId"] = thread_id
-    return raw, request, preparation_metadata
+    return raw, request
 
 
 def remove_artifacts(bundle: Path) -> None:
@@ -614,8 +576,6 @@ def write_final_artifacts(
     bundle: Path,
     raw: bytes,
     request: dict[str, str],
-    preparation_metadata: dict[str, Any] | None,
-    digest: str,
 ) -> None:
     atomic_write(bundle / "message.eml", raw)
     atomic_write(
@@ -631,119 +591,42 @@ def write_final_artifacts(
             bundle / "gmail-draft-request.json",
             draft_request.encode("utf-8"),
         )
-    if preparation_metadata is not None:
-        preparation_metadata = {"render_digest": digest, **preparation_metadata}
-        atomic_write(
-            bundle / "reply.json",
-            (json.dumps(preparation_metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
-        )
 
 
-def prepared_message_is_current(bundle: Path, digest: str) -> bool:
-    try:
-        manifest = read_manifest(bundle)
-        state = json.loads((bundle / "reply.json").read_text(encoding="utf-8"))
-        raw = (bundle / "message.eml").read_bytes()
-        request = json.loads((bundle / "gmail-request.json").read_text(encoding="utf-8"))
-        operation = "reply" if manifest.get("reply_to_message_id") is not None else "forward"
-        message_id = manifest.get("reply_to_message_id") or manifest.get("forward_message_id")
-        if not (
-            state.get("render_digest") == digest
-            and state.get("operation") == operation
-            and state.get("gmail_message_id") == message_id
-            and request.get("threadId") == state.get("thread_id")
-            and decode_base64url(request["raw"]) == raw
-        ):
-            return False
-        if manifest.get("delivery") == "draft":
-            draft_request = json.loads(
-                (bundle / "gmail-draft-request.json").read_text(encoding="utf-8")
-            )
-            return draft_request.get("message") == request
-        return True
-    except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-        return False
-
-
-def prepare_script(bundle: Path, manifest: dict[str, Any]) -> bytes:
-    params = json.dumps(
-        {
-            "userId": "me",
-            "id": manifest.get("reply_to_message_id") or manifest.get("forward_message_id"),
-            "format": "raw",
-        },
-        separators=(",", ":"),
+def fetch_original(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    message_id = manifest.get("reply_to_message_id") or manifest.get("forward_message_id")
+    if message_id is None:
+        return None
+    result = subprocess.run(
+        [
+            "gog", "--readonly", "--account", manifest["account"],
+            "api", "call", "gmail", "v1", "gmail.users.messages.get",
+            "--params", json.dumps({"userId": "me", "id": message_id, "format": "raw"}),
+            "--no-input",
+        ],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )
-    script = Path(__file__).resolve()
-    lines = [
-        "#!/bin/sh",
-        "set -eu",
-        f"bundle={shlex.quote(str(bundle.resolve()))}",
-        'response=$(mktemp "${TMPDIR:-/tmp}/quarto-mail-reply.XXXXXX")',
-        "trap 'rm -f \"$response\"' EXIT HUP INT TERM",
-        f"gog --readonly --account {shlex.quote(manifest['account'])} api call gmail v1 gmail.users.messages.get \\",
-        f"  --params {shlex.quote(params)} \\",
-        '  --no-input > "$response"',
-        f"python3 {shlex.quote(str(script))} prepare \"$bundle\" \"$response\"",
-        "",
-    ]
-    return "\n".join(lines).encode("utf-8")
+    if result.returncode:
+        raise ValueError(f"cannot fetch original message: {result.stderr.strip() or 'gog failed'}")
+    return reply_context(json.loads(result.stdout))
 
 
 def render(bundle: Path) -> None:
+    remove_artifacts(bundle)
     manifest = read_manifest(bundle)
     mailboxes = validate_manifest(manifest)
-    digest = local_digest(bundle, manifest)
-    preparation = bundle / "prepare.sh"
-    if (
-        manifest.get("reply_to_message_id") is not None
-        or manifest.get("forward_message_id") is not None
-    ):
-        if not prepared_message_is_current(bundle, digest):
-            remove_artifacts(bundle)
-        atomic_write(preparation, prepare_script(bundle, manifest), mode=0o755)
-        return
-    preparation.unlink(missing_ok=True)
-    remove_artifacts(bundle)
-    raw, request, _preparation_metadata = build_message(bundle, manifest, mailboxes, None)
-    write_final_artifacts(bundle, raw, request, None, digest)
-
-
-def prepare(bundle: Path, response_path: Path) -> None:
-    manifest = read_manifest(bundle)
-    mailboxes = validate_manifest(manifest)
-    if (
-        manifest.get("reply_to_message_id") is None
-        and manifest.get("forward_message_id") is None
-    ):
-        raise ValueError("preparation is only required for replies and forwards")
-    digest = local_digest(bundle, manifest)
-    remove_artifacts(bundle)
-    try:
-        response = json.loads(response_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise ValueError(f"invalid Gmail API response: {error}") from error
-    context = reply_context(response)
-    raw, request, preparation_metadata = build_message(bundle, manifest, mailboxes, context)
-    write_final_artifacts(bundle, raw, request, preparation_metadata, digest)
+    raw, request = build_message(bundle, manifest, mailboxes, fetch_original(manifest))
+    write_final_artifacts(bundle, raw, request)
 
 
 def main() -> None:
-    if len(sys.argv) < 3 or sys.argv[1] not in {"render", "prepare"}:
-        raise SystemExit("usage: mime.py render BUNDLE_DIRECTORY | mime.py prepare BUNDLE_DIRECTORY RESPONSE_JSON")
-    action = sys.argv[1]
-    bundle = Path(sys.argv[2])
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: mime.py BUNDLE_DIRECTORY")
+    bundle = Path(sys.argv[1])
     try:
-        if action == "render" and len(sys.argv) == 3:
-            render(bundle)
-        elif action == "prepare" and len(sys.argv) == 4:
-            prepare(bundle, Path(sys.argv[3]))
-        else:
-            raise ValueError("invalid arguments")
+        render(bundle)
     except Exception as error:
         remove_artifacts(bundle)
-        if action == "render":
-            (bundle / "prepare.sh").unlink(missing_ok=True)
         raise SystemExit(f"quarto-mail: {error}") from error
 
 
