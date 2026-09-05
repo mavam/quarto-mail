@@ -93,10 +93,12 @@ class QuartoMailTests(unittest.TestCase):
         self.write_source()
         rendered = self.render_gog()
         self.assertEqual(self.calls(), [])  # New-message rendering is offline.
-        self.assertTrue(rendered.stdout.startswith("# Project üpdate\n"))
-        self.assertNotIn("# Project", rendered.stderr)
-        for text in ("- From:", "- To:", "- Cc:", "- Bcc:", "- Account: work@example.com",
-                     "attachment~path~.txt", "inline.png", "The update includes:"):
+        self.assertTrue(rendered.stdout.startswith("```text\n≡ Project üpdate\n"))
+        self.assertNotIn("≡ Project", rendered.stderr)
+        for text in ("◎ Alex Example <alias@example.com>", "→ Customer Example <customer@example.com>",
+                     "⇢ Colleague Example <colleague@example.com> · cc",
+                     "◌ Archive Example <archive@example.com> · bcc", "◎ work@example.com · account",
+                     "⊕ attachment~path~.txt · TXT ·", "⊕ inline.png · PNG ·", " · inline", "The update includes:"):
             self.assertIn(text, rendered.stdout)
         message = self.message()
         self.assertEqual(str(message["From"]), "Alex Example <alias@example.com>")
@@ -137,7 +139,7 @@ class QuartoMailTests(unittest.TestCase):
         preview_file = self.project / "message.preview.md"
         self.assertEqual(result.stdout, "")
         expected = preview_file.read_text()
-        self.assertIn("# Project üpdate", expected)
+        self.assertIn("≡ Project üpdate", expected)
         result = self.render_gog()
         self.assertEqual(result.stdout, expected)
         self.assertFalse(preview_file.exists())
@@ -159,14 +161,14 @@ class QuartoMailTests(unittest.TestCase):
         source = nested / "message.qmd"
         self.source.rename(source)
         result = self.render_gog(source=source)
-        self.assertIn("# Project üpdate", result.stdout)
+        self.assertIn("≡ Project üpdate", result.stdout)
         self.assertTrue((nested / "message.send.sh").exists())
         self.send(script=nested / "message.send.sh")
 
     def test_complete_reply_and_threaded_send(self) -> None:
         self.write_source("reply")
         result = self.render_gog()
-        self.assertIn("# Re: Original üpdate", result.stdout)
+        self.assertIn("≡ Re: Original üpdate", result.stdout)
         self.assertIn("> Original plain body.\n> Second line.", result.stdout)
         self.assertIn("original-inline.png", result.stdout)
         message = self.message()
@@ -186,7 +188,7 @@ class QuartoMailTests(unittest.TestCase):
             "  quote: true", "  quote: false\n  subject: Replacement ✓"
         ))
         result = self.render_gog()
-        self.assertIn("# Replacement ✓", result.stdout)
+        self.assertIn("≡ Replacement ✓", result.stdout)
         self.assertNotIn("Original plain body", result.stdout)
         self.assertNotIn("gmail_quote", self.body("html"))
         self.assertEqual(str(self.message()["In-Reply-To"]), "<original-123@example.com>")
@@ -201,7 +203,7 @@ class QuartoMailTests(unittest.TestCase):
             "reply-to-message-id:", "forward-message-id:"
         ))
         result = self.render_gog()
-        self.assertIn("# Fwd: Original üpdate", result.stdout)
+        self.assertIn("≡ Fwd: Original üpdate", result.stdout)
         self.assertIn("Forwarded message", result.stdout)
         self.assertIn("Original plain body", result.stdout)
         self.assertIn("original.pdf", result.stdout)

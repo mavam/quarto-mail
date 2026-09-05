@@ -100,18 +100,17 @@ quarto render hello.qmd --to mail-gog --output - > review.md
 `SOURCE_STEM.send.sh` beside the source. Diagnostics go to stderr; errors return
 a nonzero exit status. Leave off `--quiet` to retain detailed rendering errors.
 
-The preview lists the sender, sending account, recipients (including CC/BCC),
-delivery mode, attachments and inline images, and the complete plain-text body,
-including any quoted or forwarded content:
+The preview starts with compact, glyph-prefixed rows, followed by the complete
+plain-text body, including any quoted or forwarded content. A plain-text Markdown
+block keeps each recipient and attachment on its own line and displays addresses
+literally:
 
-```md
-# Tuesday
-
-- From: Alex Example <user@example.com>
-- Account: user@example.com
-- To: Jane Doe <jane@example.com>
-- Delivery: Send
-- Attachments: None
+````md
+```text
+≡ Tuesday
+◎ Alex Example <user@example.com>
+→ Jane Doe <jane@example.com>
+```
 
 ---
 
@@ -122,7 +121,28 @@ Tuesday works for me.
 Best,
 
 Alex
+````
+
+The header uses `≡` for the subject, `◎` for the sender, `→` for each To recipient,
+`⇢` for each CC recipient, `◌` for each BCC recipient, and `⊕` for each attachment.
+CC and BCC rows also end in `· cc` and `· bcc` so you don't need to memorize the
+glyphs:
+
+```text
+⇢ Grace Park <grace@example.com> · cc
+◌ archive@example.com · bcc
+⊕ project-brief.pdf · PDF · 248 KB
+⊕ logo.png · PNG · 2 KB · inline
 ```
+
+Attachment types use short labels such as `PDF`, `TXT`, and `XLSX`; unrecognized
+types retain their MIME type. Sizes use decimal units (1 KB = 1,000 bytes). These
+labels don't change the outgoing MIME types or attachment bytes.
+
+The header omits empty fields and the normal send operation. It shows the sending
+account with `· account` only when it differs from the From address. A distinct
+Reply-To header uses `↪` with `· reply-to`; draft operations use `◇`. Inline images
+remain marked with `· inline`.
 
 Review the preview and obtain approval. There is no separate preparation step,
 approval token, or need to inspect generated scripts, MIME, or supporting files.
