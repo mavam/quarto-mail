@@ -38,7 +38,7 @@ CONTENT_TYPES = {
     ".xml": "application/xml",
     ".zip": "application/zip",
 }
-FINAL_ARTIFACTS = ("message.eml", "gmail-request.json", "gmail-draft-request.json")
+FINAL_ARTIFACTS = ("message.eml", "gmail-request.json")
 MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]+>")
 CID_REFERENCE_END = r"(?=$|[\s\"'(),<>])"
 HEADER_REGISTRY = HeaderRegistry()
@@ -582,15 +582,6 @@ def write_final_artifacts(
         bundle / "gmail-request.json",
         (json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"),
     )
-    if read_manifest(bundle).get("delivery") == "draft":
-        draft_request = json.dumps(
-            {"message": request},
-            separators=(",", ":"),
-        ) + "\n"
-        atomic_write(
-            bundle / "gmail-draft-request.json",
-            draft_request.encode("utf-8"),
-        )
 
 
 def fetch_original(manifest: dict[str, Any]) -> dict[str, Any] | None:

@@ -97,8 +97,8 @@ quarto render hello.qmd --to mail-gog --output - > review.md
 ```
 
 `--output` controls the **preview**, not the script name. The script is always
-`SOURCE_STEM.send.sh` beside the source. `--quiet` suppresses progress, not the
-preview. Diagnostics go to stderr; errors return a nonzero exit status.
+`SOURCE_STEM.send.sh` beside the source. Diagnostics go to stderr; errors return
+a nonzero exit status. Leave off `--quiet` to retain detailed rendering errors.
 
 The preview lists the sender, sending account, recipients (including CC/BCC),
 delivery mode, attachments and inline images, and the complete plain-text body,

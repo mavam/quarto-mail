@@ -42,7 +42,7 @@ class LiveMailTests(unittest.TestCase):
             "---\nmail:\n  sender: self\n  to:\n    - " + ADDRESS + "\n"
             + metadata + "---\n\n" + body + "\n", encoding="utf-8",
         )
-        preview = self.run_command(["quarto", "render", source.name, "--to", "mail-gog", "--output", "-", "--quiet"])
+        preview = self.run_command(["quarto", "render", source.name, "--to", "mail-gog", "--output", "-"])
         self.assertIn(ADDRESS, preview)
         self.assertIn(body, preview)
         (self.project / f"{name}.preview.md").write_text(preview)

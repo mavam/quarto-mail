@@ -67,7 +67,7 @@ class QuartoMailTests(unittest.TestCase):
         return result
 
     def render_gog(self, **kwargs):
-        return self.render("--to", "mail-gog", "--output", "-", "--quiet", **kwargs)
+        return self.render("--to", "mail-gog", "--output", "-", **kwargs)
 
     def send(self, success=True, script=None):
         result = subprocess.run(
@@ -155,6 +155,7 @@ class QuartoMailTests(unittest.TestCase):
         self.write_source()
         nested = self.project / "nested mail"
         nested.mkdir()
+        shutil.copy(self.project / "_metadata.yml", nested / "_metadata.yml")
         source = nested / "message.qmd"
         self.source.rename(source)
         result = self.render_gog(source=source)
