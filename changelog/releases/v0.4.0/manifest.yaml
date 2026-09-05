@@ -1,0 +1,9 @@
+created: 2026-09-05
+title: Complete previews and standalone delivery scripts
+intro: >-
+  Quarto Mail now turns Markdown messages into complete approval previews and standalone
+  delivery scripts. Rendering fetches reply and forward originals when needed while
+  keeping Gmail delivery explicit and separate.
+source:
+  mode: sync-stable-queue
+  previous_stable: v0.3.0
