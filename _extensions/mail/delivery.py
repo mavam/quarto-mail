@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import shlex
 import sys
 from email.parser import BytesParser
@@ -12,19 +13,20 @@ from typing import Any
 
 import mime
 
-# Keep labels deterministic and based on MIME, not potentially misleading filenames.
-ATTACHMENT_TYPES = {
-    **{content_type: extension[1:].upper() for extension, content_type in mime.CONTENT_TYPES.items()},
-    "application/msword": "DOC",
-    "application/vnd.ms-excel": "XLS",
-    "application/vnd.ms-powerpoint": "PPT",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "DOCX",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "XLSX",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "PPTX",
+# An instance uses Python's built-in mappings, not the host's MIME database.
+MIME_TYPES = mimetypes.MimeTypes(filenames=())
+ATTACHMENT_LABELS = {
     "application/octet-stream": "Binary",
     "image/jpeg": "JPEG",
-    "message/rfc822": "EML",
 }
+
+
+def attachment_type(content_type: str) -> str:
+    if label := ATTACHMENT_LABELS.get(content_type):
+        return label
+    if extension := MIME_TYPES.guess_extension(content_type):
+        return extension.lstrip(".").upper()
+    return content_type
 
 
 def preview_value(value: str) -> str:
@@ -65,7 +67,7 @@ def preview(raw: bytes, manifest: dict[str, Any]) -> str:
         size = len(part.get_payload(decode=True) or b"")
         name = preview_value(part.get_filename() or "Unnamed attachment")
         content_type = part.get_content_type()
-        label = preview_value(ATTACHMENT_TYPES.get(content_type, content_type))
+        label = preview_value(attachment_type(content_type))
         suffix = " · inline" if part.get_content_disposition() == "inline" else ""
         lines.append(f"⊕ {name} · {label} · {attachment_size(size)}{suffix}")
     body = mime.body_content(message, "plain")

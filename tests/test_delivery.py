@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import subprocess
 import sys
 import unittest
 from email import policy
 from email.message import EmailMessage
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_extensions" / "mail"))
 import delivery
@@ -74,6 +76,9 @@ class PreviewTests(unittest.TestCase):
         cases = [
             ("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet", "XLSX"),
             ("application", "vnd.openxmlformats-officedocument.wordprocessingml.document", "DOCX"),
+            ("application", "epub+zip", "EPUB"),
+            ("audio", "flac", "FLAC"),
+            ("font", "woff2", "WOFF2"),
             ("image", "jpeg", "JPEG"),
             ("application", "octet-stream", "Binary"),
             ("application", "x-custom-format", "application/x-custom-format"),
@@ -84,6 +89,16 @@ class PreviewTests(unittest.TestCase):
         for _, _, label in cases:
             self.assertIn(f"⊕ misleading.pdf · {label} · 4 B\n", preview)
         self.assertNotIn(" · PDF", preview)
+
+    def test_attachment_types_ignore_host_mappings(self) -> None:
+        host_types = mimetypes.MimeTypes()
+        host_types.add_type("application/x-host-only", ".host")
+        with patch.object(mimetypes, "_db", host_types):
+            self.assertEqual(mimetypes.guess_extension("application/x-host-only"), ".host")
+            # Construct the preview database while the global registry is customized.
+            with patch.object(delivery, "MIME_TYPES", mimetypes.MimeTypes(filenames=())):
+                self.assertEqual(delivery.attachment_type("application/x-host-only"), "application/x-host-only")
+                self.assertEqual(delivery.attachment_type("application/pdf"), "PDF")
 
     def test_inline_and_unnamed_attachments(self) -> None:
         self.message.add_attachment(b"img", maintype="image", subtype="png", filename="logo.png", disposition="inline")
