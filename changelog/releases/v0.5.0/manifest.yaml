@@ -1,0 +1,9 @@
+created: 2026-09-06
+title: A cleaner email preview
+intro: >-
+  Email previews now group the subject, recipients, and attachments along a compact
+  open spine. Circled CC/BCC badges and shorter attachment labels keep the review
+  focused, without changing the outgoing message.
+source:
+  mode: sync-stable-queue
+  previous_stable: v0.4.0
