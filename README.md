@@ -100,18 +100,18 @@ quarto render hello.qmd --to mail-gog --output - > review.md
 `SOURCE_STEM.send.sh` beside the source. Diagnostics go to stderr; errors return
 a nonzero exit status. Leave off `--quiet` to retain detailed rendering errors.
 
-The preview lists the sender, sending account, recipients (including CC/BCC),
-delivery mode, attachments and inline images, and the complete plain-text body,
-including any quoted or forwarded content:
+The preview uses an open spine: glyphs share one column, with a `│` spacer between
+the subject, recipients, and attachments. Each recipient and attachment has its
+own row. A plain-text Markdown block preserves the layout and displays addresses
+literally, followed by the complete plain-text body, including any quoted or
+forwarded content:
 
-```md
-# Tuesday
-
-- From: Alex Example <user@example.com>
-- Account: user@example.com
-- To: Jane Doe <jane@example.com>
-- Delivery: Send
-- Attachments: None
+````md
+```text
+≡ Tuesday
+│
+→ Jane Doe <jane@example.com>
+```
 
 ---
 
@@ -122,7 +122,29 @@ Tuesday works for me.
 Best,
 
 Alex
+````
+
+The header uses `≡` for the subject, `→` for each To recipient, `⇢` for each CC
+recipient, `◌` for each BCC recipient, and `⊕` for each attachment.
+CC and BCC rows also end in circled `Ⓒ` and `Ⓑ` badges:
+
+```text
+⇢ Grace Park <grace@example.com> Ⓒ
+◌ archive@example.com Ⓑ
+│
+⊕ project-brief.pdf · PDF · 248 KB
+⊕ logo.png · PNG · 2 KB · inline
 ```
+
+Attachment types use short labels such as `PDF`, `TXT`, and `XLSX`; unrecognized
+types retain their MIME type. Sizes use decimal units (1 KB = 1,000 bytes). These
+labels don't change the outgoing MIME types or attachment bytes.
+
+The layout is fixed, with no preview settings. It omits the sender, sending
+account, empty groups, and normal send operation. Sender selection and delivery
+still use the configured `mail.sender` profile unchanged. A distinct Reply-To
+header uses `↪` with `· reply-to`; draft operations use `◇`. These appear with the
+subject before the recipients. Inline images remain marked with `· inline`.
 
 Review the preview and obtain approval. There is no separate preparation step,
 approval token, or need to inspect generated scripts, MIME, or supporting files.

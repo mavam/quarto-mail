@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import html
 import json
+import mimetypes
 import shlex
 import sys
 from email.parser import BytesParser
@@ -13,40 +13,67 @@ from typing import Any
 
 import mime
 
+# An instance uses Python's built-in mappings, not the host's MIME database.
+MIME_TYPES = mimetypes.MimeTypes(filenames=())
+ATTACHMENT_LABELS = {
+    "application/octet-stream": "Binary",
+    "image/jpeg": "JPEG",
+}
 
-def markdown_value(value: str) -> str:
-    value = html.escape(value, quote=False)
-    for character in ("\\", "`", "*", "_", "[", "]"):
-        value = value.replace(character, "\\" + character)
-    return value
+
+def attachment_type(content_type: str) -> str:
+    if label := ATTACHMENT_LABELS.get(content_type):
+        return label
+    if extension := MIME_TYPES.guess_extension(content_type):
+        return extension.lstrip(".").upper()
+    return content_type
+
+
+def preview_value(value: str) -> str:
+    # Every metadata row must remain one line, including inside a Markdown fence.
+    return " ".join(value.split())
+
+
+def attachment_size(size: int) -> str:
+    for divisor, unit in ((1000**4, "TB"), (1000**3, "GB"), (1000**2, "MB"), (1000, "KB")):
+        if size >= divisor:
+            return f"{size / divisor:.1f}".removesuffix(".0") + f" {unit}"
+    return f"{size} B"
 
 
 def preview(raw: bytes, manifest: dict[str, Any]) -> str:
     message = BytesParser(policy=default).parsebytes(raw)
-    lines = ["# " + markdown_value(str(message.get("Subject", "(no subject)"))), ""]
-    lines.append("- From: " + markdown_value(str(message["From"])))
-    lines.append("- Account: " + markdown_value(manifest["account"]))
-    for name in ("To", "Cc", "Bcc"):
-        if message.get(name):
-            lines.append(f"- {name}: " + markdown_value(str(message[name])))
-    delivery = "Send"
+    lines = ["≡ " + preview_value(str(message.get("Subject", "(no subject)")))]
+    senders = message["From"].addresses
+    if message.get("Reply-To"):
+        replies = message["Reply-To"].addresses
+        if {address.addr_spec for address in replies} != {address.addr_spec for address in senders}:
+            lines.extend("↪ " + preview_value(str(address)) + " · reply-to" for address in replies)
     if manifest.get("delivery") == "draft":
         delivery = "Update draft " + manifest["draft_id"] if manifest.get("draft_id") else "Create draft"
-    lines.append("- Delivery: " + markdown_value(delivery))
+        lines.append("◇ " + preview_value(delivery))
+    recipients = []
+    for name, glyph, suffix in (("To", "→", ""), ("Cc", "⇢", " Ⓒ"), ("Bcc", "◌", " Ⓑ")):
+        if message.get(name):
+            recipients.extend(
+                f"{glyph} " + preview_value(str(address)) + suffix
+                for address in message[name].addresses
+            )
     attachments = []
     for part in message.walk():
         if part.is_multipart() or part.get_content_disposition() not in ("attachment", "inline"):
             continue
         size = len(part.get_payload(decode=True) or b"")
-        name = markdown_value(part.get_filename() or "Unnamed attachment")
-        label = "inline" if part.get_content_disposition() == "inline" else "attachment"
-        attachments.append(f"  - {name} ({part.get_content_type()}, {size} bytes, {label})")
-    lines.append("- Attachments:" if attachments else "- Attachments: None")
-    lines.extend(attachments)
+        name = preview_value(part.get_filename() or "Unnamed attachment")
+        content_type = part.get_content_type()
+        label = preview_value(attachment_type(content_type))
+        suffix = " · inline" if part.get_content_disposition() == "inline" else ""
+        attachments.append(f"⊕ {name} · {label} · {attachment_size(size)}{suffix}")
     body = mime.body_content(message, "plain")
     if body is None:
         raise ValueError("the finalized message has no plain-text preview")
-    return "\n".join(lines) + "\n\n---\n\n" + body
+    envelope = "\n│\n".join("\n".join(group) for group in (lines, recipients, attachments) if group)
+    return "```text\n" + envelope + "\n```\n\n---\n\n" + body
 
 
 def delivery_script(manifest: dict[str, Any], request: dict[str, Any]) -> str:
