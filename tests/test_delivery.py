@@ -34,13 +34,14 @@ class PreviewTests(unittest.TestCase):
         expected = [
             "```text",
             "≡ Project üpdate",
-            "◎ Alex Example <alex@example.com>",
+            "│",
             '→ "Doe, Jäne" <jane@example.com>',
             "→ Ben <ben@example.com>",
-            "⇢ Grace <grace@example.com> · cc",
-            "⇢ Hugo <hugo@example.com> · cc",
-            "◌ Isla <isla@example.com> · bcc",
-            "◌ archive@example.com · bcc",
+            "⇢ Grace <grace@example.com> Ⓒ",
+            "⇢ Hugo <hugo@example.com> Ⓒ",
+            "◌ Isla <isla@example.com> Ⓑ",
+            "◌ archive@example.com Ⓑ",
+            "│",
             "⊕ brief.pdf · PDF · 248 KB",
             "⊕ agenda.txt · TXT · 144 B",
             "```",
@@ -51,14 +52,27 @@ class PreviewTests(unittest.TestCase):
 
     def test_empty_and_default_fields_are_omitted(self) -> None:
         preview = self.preview()
-        for text in ("account", "Send", "Delivery", "Attachments", "None", "reply-to", " · cc", " · bcc", "⊕"):
+        for text in ("◎", "account", "Send", "Delivery", "Attachments", "None", "reply-to", "Ⓒ", "Ⓑ", "⊕"):
             self.assertNotIn(text, preview)
 
-    def test_different_account_and_alias_are_visible(self) -> None:
-        for account in ("other@example.com", "named-work"):
+    def test_sender_and_account_are_omitted(self) -> None:
+        for account in ("alex@example.com", "other@example.com", "named-work"):
             with self.subTest(account=account):
                 self.manifest["account"] = account
-                self.assertIn(f"◎ {account} · account\n", self.preview())
+                preview = self.preview()
+                self.assertNotIn("◎", preview)
+                self.assertNotIn("alex@example.com", preview)
+                self.assertNotIn(account, preview)
+
+    def test_spine_only_separates_nonempty_groups(self) -> None:
+        self.assertEqual(self.preview().count("\n│\n"), 1)
+        self.message.add_attachment(b"x", maintype="text", subtype="plain", filename="notes.txt")
+        self.assertEqual(self.preview().count("\n│\n"), 2)
+        del self.message["To"]
+        preview = self.preview()
+        self.assertEqual(preview.count("\n│\n"), 1)
+        self.assertIn("≡ Project üpdate\n│\n⊕", preview)
+        self.assertNotIn("│\n```", preview)
 
     def test_reply_to_is_visible_only_when_different(self) -> None:
         self.message["Reply-To"] = "Another name <alex@example.com>"
@@ -131,7 +145,7 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(lines[0], "≡ *Literal* [link](https://example.com) <tag> & ```")
         self.assertIn('→ "Doe, Jäne" <jane@example.com>', lines)
         self.assertIn("⊕ notes ``` # injected.txt · TXT · 1 B", lines)
-        self.assertTrue(all(line and line[0] in "≡◎→⊕" for line in lines))
+        self.assertTrue(all(line and line[0] in "≡◎→⊕│" for line in lines))
         self.assertNotIn("&lt;", preview)
 
     def test_missing_plain_body_still_fails(self) -> None:

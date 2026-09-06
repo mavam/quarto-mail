@@ -45,22 +45,21 @@ def preview(raw: bytes, manifest: dict[str, Any]) -> str:
     message = BytesParser(policy=default).parsebytes(raw)
     lines = ["≡ " + preview_value(str(message.get("Subject", "(no subject)")))]
     senders = message["From"].addresses
-    lines.extend("◎ " + preview_value(str(address)) for address in senders)
-    if {address.addr_spec for address in senders} != {manifest["account"]}:
-        lines.append("◎ " + preview_value(manifest["account"]) + " · account")
     if message.get("Reply-To"):
         replies = message["Reply-To"].addresses
         if {address.addr_spec for address in replies} != {address.addr_spec for address in senders}:
             lines.extend("↪ " + preview_value(str(address)) + " · reply-to" for address in replies)
-    for name, glyph, suffix in (("To", "→", ""), ("Cc", "⇢", " · cc"), ("Bcc", "◌", " · bcc")):
-        if message.get(name):
-            lines.extend(
-                f"{glyph} " + preview_value(str(address)) + suffix
-                for address in message[name].addresses
-            )
     if manifest.get("delivery") == "draft":
         delivery = "Update draft " + manifest["draft_id"] if manifest.get("draft_id") else "Create draft"
         lines.append("◇ " + preview_value(delivery))
+    recipients = []
+    for name, glyph, suffix in (("To", "→", ""), ("Cc", "⇢", " Ⓒ"), ("Bcc", "◌", " Ⓑ")):
+        if message.get(name):
+            recipients.extend(
+                f"{glyph} " + preview_value(str(address)) + suffix
+                for address in message[name].addresses
+            )
+    attachments = []
     for part in message.walk():
         if part.is_multipart() or part.get_content_disposition() not in ("attachment", "inline"):
             continue
@@ -69,11 +68,12 @@ def preview(raw: bytes, manifest: dict[str, Any]) -> str:
         content_type = part.get_content_type()
         label = preview_value(attachment_type(content_type))
         suffix = " · inline" if part.get_content_disposition() == "inline" else ""
-        lines.append(f"⊕ {name} · {label} · {attachment_size(size)}{suffix}")
+        attachments.append(f"⊕ {name} · {label} · {attachment_size(size)}{suffix}")
     body = mime.body_content(message, "plain")
     if body is None:
         raise ValueError("the finalized message has no plain-text preview")
-    return "```text\n" + "\n".join(lines) + "\n```\n\n---\n\n" + body
+    envelope = "\n│\n".join("\n".join(group) for group in (lines, recipients, attachments) if group)
+    return "```text\n" + envelope + "\n```\n\n---\n\n" + body
 
 
 def delivery_script(manifest: dict[str, Any], request: dict[str, Any]) -> str:

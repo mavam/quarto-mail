@@ -95,9 +95,12 @@ class QuartoMailTests(unittest.TestCase):
         self.assertEqual(self.calls(), [])  # New-message rendering is offline.
         self.assertTrue(rendered.stdout.startswith("```text\n≡ Project üpdate\n"))
         self.assertNotIn("≡ Project", rendered.stderr)
-        for text in ("◎ Alex Example <alias@example.com>", "→ Customer Example <customer@example.com>",
-                     "⇢ Colleague Example <colleague@example.com> · cc",
-                     "◌ Archive Example <archive@example.com> · bcc", "◎ work@example.com · account",
+        self.assertNotIn("◎", rendered.stdout)
+        self.assertNotIn("alias@example.com", rendered.stdout)
+        self.assertNotIn("work@example.com", rendered.stdout)
+        for text in ("→ Customer Example <customer@example.com>",
+                     "⇢ Colleague Example <colleague@example.com> Ⓒ",
+                     "◌ Archive Example <archive@example.com> Ⓑ",
                      "⊕ attachment~path~.txt · TXT ·", "⊕ inline.png · PNG ·", " · inline", "The update includes:"):
             self.assertIn(text, rendered.stdout)
         message = self.message()
@@ -303,7 +306,7 @@ class QuartoMailTests(unittest.TestCase):
         metadata = self.project / "_metadata.yml"
         metadata.write_text(metadata.read_text().replace("account: work@example.com", "account: named-work"))
         result = self.render_gog()
-        self.assertIn("named-work", result.stdout)
+        self.assertNotIn("named-work", result.stdout)
         self.assertEqual(self.message()["To"].addresses[0].display_name, "Doe, Jäne")
         self.send()
         args = self.calls()[0]["args"]
