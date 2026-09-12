@@ -171,6 +171,44 @@ After editing the source, render again and approve the new preview before
 executing the new script. Stop on rendering errors; don't execute an older script
 as a substitute for a failed render.
 
+### Use temporary workspaces
+
+To keep drafts and render artifacts out of your configuration directory, keep a
+clean local starter template with `_quarto.yml`, `_metadata.yml`,
+`_extensions/mail/`, and a reusable `message.qmd`. If starting from an installed
+project, move `_extensions/mavam/mail/` to `_extensions/mail/` so Quarto can copy
+the extension when reusing the local template.
+
+Quarto accepts a local directory as a template:
+
+```sh
+workdir="$(mktemp -d "${TMPDIR:-/tmp}/quarto-mail.XXXXXXXX")"
+(cd "$workdir" && quarto use template /absolute/path/to/mail-template --no-prompt)
+```
+
+Quarto copies the configuration and message skeleton and installs the bundled
+extension into the temporary project. Use `message.qmd` for a stable filename;
+Quarto renames a file named `template.qmd` to match the workspace directory.
+Keep old drafts and generated artifacts out of the starter template; use
+`.quartoignore` to exclude files that shouldn't be copied.
+
+Edit `message.qmd` in the workspace, using absolute paths for attachments and
+local images. Render its approval preview:
+
+```sh
+(cd "$workdir" && quarto render message.qmd --to mail-gog --output -)
+```
+
+Retain the workspace path through review and approval. After approval, run
+`sh "$workdir/message.send.sh"` once and verify delivery. Then remove the entire
+workspace with `rm -rf -- "$workdir"`, including its `.mail`, `_files`, and
+`.quarto` directories. Don't attach an exit trap to setup: the workspace must
+survive until approval and verified delivery.
+
+OS temporary-file cleanup is a fallback, not a guaranteed schedule or retention
+period. Save drafts that need durable storage elsewhere, outside the starter
+template directory.
+
 ### Reply or forward
 
 The render and delivery commands stay the same. Change only the frontmatter:
@@ -225,7 +263,7 @@ The `mail` object accepts:
 | `subject` | Required for a new message; otherwise inherited when omitted. |
 | `opening`, `closing` | Optional single-line greeting and closing. |
 | `identity`, `signature` | Optional sign-off and signature profiles. |
-| `attachments` | File paths relative to the `.qmd` source. |
+| `attachments` | Absolute file paths or paths relative to the `.qmd` source. |
 | `reply-to-message-id` | Gmail message ID to reply to. |
 | `quote` | Include the original reply body; defaults to `false`. |
 | `reply-all` | Derive To/Cc from the original; defaults to `false`. |
