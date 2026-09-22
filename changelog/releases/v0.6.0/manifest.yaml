@@ -1,0 +1,10 @@
+created: 2026-09-22
+title: 'Quarto Mail v0.6.0: Native Gmail delivery'
+intro: >-
+  Delivery scripts now hand the approved message to gog's Gmail commands instead of
+  raw API requests, so the message you approve is readable RFC822 in the script itself
+  and never lands in a temporary file. Rendering and delivery need only gog's gmail
+  commands, and running a script now requires gog 0.41 or later.
+source:
+  mode: sync-stable-queue
+  previous_stable: v0.5.0
