@@ -21,7 +21,9 @@ if "show" in args:
     assert "--readonly" in args
     # gog reports a fetched message inside an envelope.
     print(json.dumps({"headers": {}, "message": json.loads(Path(os.environ["FAKE_GMAIL_RESPONSE"]).read_text())}))
-elif "gmail" in args and ("send" in args or "drafts" in args):
-    print('{"id":"result-123","threadId":"thread-456"}')
+elif "drafts" in args:
+    print('{"draftId":"draft-result-123","message":{"id":"result-123","threadId":"thread-456"},"threadId":"thread-456"}')
+elif "send" in args:
+    print('{"from":"work@example.com","messageId":"result-123","threadId":"thread-456"}')
 else:
     raise SystemExit("unexpected gog command")

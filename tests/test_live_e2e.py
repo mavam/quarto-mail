@@ -49,10 +49,10 @@ class LiveMailTests(unittest.TestCase):
         return preview
 
     def deliver(self, name):
+        # Sends report messageId; draft operations report draftId and the stored message.
         result = json.loads(self.run_command(["sh", f"{name}.send.sh"]))
-        result = result.get("result", result)
-        self.assertIn("id", result)
-        return result
+        identifier = result.get("messageId") or result["message"]["id"]
+        return {**result, "id": identifier, "threadId": result["threadId"]}
 
     def verify_message(self, name, raw):
         actual = BytesParser(policy=default).parsebytes(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
@@ -101,16 +101,15 @@ class LiveMailTests(unittest.TestCase):
             self.render("draft", f"  subject: '{subject} draft'\n  delivery: draft\n", "Synthetic draft test.")
             draft = self.deliver("draft")
             try:
-                self.render("draft", f"  subject: '{subject} draft'\n  delivery: draft\n  draft-id: {draft['id']}\n", "Updated synthetic draft test.")
+                self.render("draft", f"  subject: '{subject} draft'\n  delivery: draft\n  draft-id: {draft['draftId']}\n", "Updated synthetic draft test.")
                 updated = self.deliver("draft")
-                self.assertEqual(updated["id"], draft["id"])
-                actual = self.api("gmail.users.drafts.get", {"id": draft["id"], "format": "raw"})
+                self.assertEqual(updated["draftId"], draft["draftId"])
+                actual = self.api("gmail.users.drafts.get", {"id": draft["draftId"], "format": "raw"})
                 self.verify_message("draft", actual["message"]["raw"])
             finally:
                 self.run_command([
-                    "gog", "--account", ADDRESS, "api", "call", "gmail", "v1", "gmail.users.drafts.delete",
-                    "--params", json.dumps({"userId": "me", "id": draft["id"]}),
-                    "--allow-write", "--force", "--no-input",
+                    "gog", "--account", ADDRESS, "gmail", "drafts", "delete", draft["draftId"],
+                    "--force", "--no-input",
                 ])
             print(json.dumps({"subject": subject, "new": new["id"], "reply": reply["id"], "forward": forward["id"], "draft": "created, updated, deleted"}))
 

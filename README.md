@@ -157,7 +157,8 @@ sh hello.send.sh
 ```
 
 The script pipes its embedded, frozen message to `gog gmail send` (or
-`gog gmail drafts create|update`) and returns gog's JSON result on stdout. The
+`gog gmail drafts create|update`) and returns gog's JSON result on stdout: a send
+reports `messageId` and `threadId`, a draft operation reports `draftId`. The
 message is readable RFC822 in the script itself and reaches gog on stdin, so
 delivery writes no temporary copy to disk. It needs only a POSIX shell and an
 authenticated gog; it doesn't

@@ -131,7 +131,7 @@ class QuartoMailTests(unittest.TestCase):
         copied = self.project / "copied.sh"
         copied.write_bytes(frozen_script)
         result = self.send(script=copied)
-        self.assertEqual(json.loads(result.stdout)["id"], "result-123")
+        self.assertEqual(json.loads(result.stdout)["messageId"], "result-123")
         call = self.calls()[0]
         self.assertEqual(call["raw"].encode("latin-1"), raw)
         self.assertEqual(self.command(call)[:4], ["gmail", "send", "--raw-file", "-"])
