@@ -38,7 +38,7 @@ CONTENT_TYPES = {
     ".xml": "application/xml",
     ".zip": "application/zip",
 }
-FINAL_ARTIFACTS = ("message.eml", "gmail-request.json")
+FINAL_ARTIFACTS = ("message.eml", "delivery.json")
 MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]+>")
 CID_REFERENCE_END = r"(?=$|[\s\"'(),<>])"
 HEADER_REGISTRY = HeaderRegistry()
@@ -76,10 +76,6 @@ def decode_base64url(value: str) -> bytes:
         return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
     except Exception as error:
         raise ValueError("the Gmail response contains invalid base64url data") from error
-
-
-def encode_base64url(value: bytes) -> str:
-    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
 def read_manifest(bundle: Path) -> dict[str, Any]:
@@ -272,8 +268,10 @@ def sanitize_mime_filename(filename: str | None) -> str | None:
 
 
 def reply_context(response: dict[str, Any]) -> dict[str, Any]:
-    if "raw" not in response and isinstance(response.get("result"), dict):
-        response = response["result"]
+    # gog reports a message inside a result or message envelope.
+    for envelope in ("result", "message"):
+        if "raw" not in response and isinstance(response.get(envelope), dict):
+            response = response[envelope]
     raw_value = response.get("raw")
     thread_id = response.get("threadId")
     if not isinstance(raw_value, str) or raw_value == "":
@@ -444,6 +442,8 @@ def build_message(
     mailboxes: dict[str, Any],
     context: dict[str, Any] | None,
 ) -> tuple[bytes, dict[str, str]]:
+    """Return the finalized RFC822 message and the delivery options it needs."""
+
     message = EmailMessage(policy=SMTP)
     if manifest.get("reply_all") and context is not None:
         derive_reply_all(mailboxes, context)
@@ -547,10 +547,8 @@ def build_message(
     message["Message-ID"] = f"<{digest}@quarto-mail>"
     set_boundaries(message, digest)
     raw = message.as_bytes(policy=SMTP)
-    request = {"raw": encode_base64url(raw)}
-    if thread_id is not None:
-        request["threadId"] = thread_id
-    return raw, request
+    delivery = {} if thread_id is None else {"thread_id": thread_id}
+    return raw, delivery
 
 
 def remove_artifacts(bundle: Path) -> None:
@@ -575,12 +573,12 @@ def atomic_write(path: Path, value: bytes, mode: int | None = None) -> None:
 def write_final_artifacts(
     bundle: Path,
     raw: bytes,
-    request: dict[str, str],
+    delivery: dict[str, str],
 ) -> None:
     atomic_write(bundle / "message.eml", raw)
     atomic_write(
-        bundle / "gmail-request.json",
-        (json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"),
+        bundle / "delivery.json",
+        (json.dumps(delivery, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"),
     )
 
 
@@ -591,9 +589,7 @@ def fetch_original(manifest: dict[str, Any]) -> dict[str, Any] | None:
     result = subprocess.run(
         [
             "gog", "--readonly", "--account", manifest["account"],
-            "api", "call", "gmail", "v1", "gmail.users.messages.get",
-            "--params", json.dumps({"userId": "me", "id": message_id, "format": "raw"}),
-            "--no-input",
+            "gmail", "show", message_id, "--format", "raw", "--json", "--no-input",
         ],
         stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )
@@ -606,8 +602,8 @@ def render(bundle: Path) -> None:
     remove_artifacts(bundle)
     manifest = read_manifest(bundle)
     mailboxes = validate_manifest(manifest)
-    raw, request = build_message(bundle, manifest, mailboxes, fetch_original(manifest))
-    write_final_artifacts(bundle, raw, request)
+    raw, delivery = build_message(bundle, manifest, mailboxes, fetch_original(manifest))
+    write_final_artifacts(bundle, raw, delivery)
 
 
 def main() -> None:

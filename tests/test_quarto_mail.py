@@ -83,6 +83,10 @@ class QuartoMailTests(unittest.TestCase):
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
 
+    def command(self, call):
+        # Drop the global flags that precede the gog subcommand.
+        return call["args"][call["args"].index("gmail"):]
+
     def message(self):
         return parse_message((self.bundle / "message.eml").read_bytes())
 
@@ -107,8 +111,7 @@ class QuartoMailTests(unittest.TestCase):
         self.assertEqual(str(message["From"]), "Alex Example <alias@example.com>")
         self.assertEqual(str(message["Bcc"]), "Archive Example <archive@example.com>")
         raw = (self.bundle / "message.eml").read_bytes()
-        request = json.loads((self.bundle / "gmail-request.json").read_text())
-        self.assertEqual(decode_raw(request), raw)
+        self.assertEqual(json.loads((self.bundle / "delivery.json").read_text()), {})
         self.assertRegex(str(message["Message-ID"]), r"^<[0-9a-f]{64}@quarto-mail>$")
         self.assertEqual(message.get_content_type(), "multipart/mixed")
         parts = list(message.walk())
@@ -128,11 +131,10 @@ class QuartoMailTests(unittest.TestCase):
         copied = self.project / "copied.sh"
         copied.write_bytes(frozen_script)
         result = self.send(script=copied)
-        self.assertEqual(json.loads(result.stdout)["id"], "result-123")
+        self.assertEqual(json.loads(result.stdout)["messageId"], "result-123")
         call = self.calls()[0]
-        self.assertEqual(call["body"], request)
-        self.assertIn("gmail.users.messages.send", call["args"])
-        self.assertFalse(Path(call["body_path"]).exists())
+        self.assertEqual(call["raw"].encode("latin-1"), raw)
+        self.assertEqual(self.command(call)[:4], ["gmail", "send", "--raw-file", "-"])
         self.send(script=copied)
         self.assertEqual(len(self.calls()), 2)  # Each invocation attempts delivery.
 
@@ -183,8 +185,10 @@ class QuartoMailTests(unittest.TestCase):
         calls = self.calls()
         self.assertEqual(len(calls), 1)
         self.assertIn("--readonly", calls[0]["args"])
+        self.assertEqual(self.command(calls[0])[:3], ["gmail", "show", "message-123"])
         self.send()
-        self.assertEqual(self.calls()[-1]["body"]["threadId"], "thread-456")
+        call = self.calls()[-1]
+        self.assertEqual(call["args"][call["args"].index("--thread-id") + 1], "thread-456")
 
     def test_unquoted_reply_and_explicit_subject(self) -> None:
         self.write_source("reply", lambda text: text.replace(
@@ -212,7 +216,7 @@ class QuartoMailTests(unittest.TestCase):
         self.assertIn("original.pdf", result.stdout)
         self.assertIsNone(self.message()["In-Reply-To"])
         self.send()
-        self.assertNotIn("threadId", self.calls()[-1]["body"])
+        self.assertNotIn("--thread-id", self.calls()[-1]["args"])
         text = self.source.read_text().replace("  quote: true", "  include-original-attachments: false")
         self.source.write_text(text)
         result = self.render_gog()
@@ -229,10 +233,9 @@ class QuartoMailTests(unittest.TestCase):
                 self.assertIn("Update draft draft-123" if draft_id else "Create draft", result.stdout)
                 self.send()
                 call = self.calls()[-1]
-                self.assertIn("gmail.users.drafts.update" if draft_id else "gmail.users.drafts.create", call["args"])
-                self.assertEqual(decode_raw(call["body"]["message"]), (self.bundle / "message.eml").read_bytes())
-                params = json.loads(call["args"][call["args"].index("--params") + 1])
-                self.assertEqual(params.get("id"), draft_id)
+                expected = ["gmail", "drafts", "update", draft_id] if draft_id else ["gmail", "drafts", "create"]
+                self.assertEqual(self.command(call)[:len(expected)], expected)
+                self.assertEqual(call["raw"].encode("latin-1"), (self.bundle / "message.eml").read_bytes())
 
     def test_reply_all_replaces_explicit_recipients(self) -> None:
         self.write_source("reply", lambda text: text.replace("  quote: true", "  quote: true\n  reply-all: true"))
@@ -250,7 +253,7 @@ class QuartoMailTests(unittest.TestCase):
         self.assertIn("Thank you", plain.stdout)
         self.render("--to", "mail-html", "--quiet")
         self.assertTrue((self.project / "message.html").exists())
-        self.assertTrue(all("gmail.users.messages.get" in call["args"] for call in self.calls()))
+        self.assertTrue(all(self.command(call)[:2] == ["gmail", "show"] for call in self.calls()))
 
     def test_failed_read_invalidates_old_delivery_script(self) -> None:
         self.write_source("reply")
@@ -277,7 +280,8 @@ class QuartoMailTests(unittest.TestCase):
         result = self.send(success=False)
         self.assertEqual(result.returncode, 7)
         self.assertIn("synthetic Gmail failure", result.stderr)
-        self.assertFalse(Path(self.calls()[-1]["body_path"]).exists())
+        # A failed delivery leaves no message bytes behind: they only ever reach stdin.
+        self.assertEqual(self.command(self.calls()[-1])[2:4], ["--raw-file", "-"])
         del self.env["FAKE_GOG_FAIL"]
         self.send()
         self.assertEqual(len(self.calls()), 2)
