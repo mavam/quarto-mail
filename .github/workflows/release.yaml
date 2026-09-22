@@ -27,3 +27,4 @@ jobs:
     with:
       intro: ${{ inputs.intro }}
       title: ${{ inputs.title }}
+      post-create: bash .github/scripts/sync-extension-version.sh
