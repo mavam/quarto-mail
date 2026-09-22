@@ -8,10 +8,9 @@ from pathlib import Path
 
 args = sys.argv[1:]
 call = {"args": args}
-if "--body" in args:
-    path = Path(args[args.index("--body") + 1].removeprefix("@"))
-    call["body"] = json.loads(path.read_text())
-    call["body_path"] = str(path)
+if "--raw-file" in args:
+    source = args[args.index("--raw-file") + 1]
+    call["raw"] = sys.stdin.buffer.read().decode("latin-1") if source == "-" else Path(source).read_text()
 if os.environ.get("FAKE_GOG_LOG"):
     with Path(os.environ["FAKE_GOG_LOG"]).open("a") as log:
         log.write(json.dumps(call) + "\n")
@@ -21,9 +20,7 @@ if os.environ.get("FAKE_GOG_FAIL"):
 if "gmail.users.messages.get" in args:
     assert "--readonly" in args
     print(Path(os.environ["FAKE_GMAIL_RESPONSE"]).read_text())
-elif any(method in args for method in (
-    "gmail.users.messages.send", "gmail.users.drafts.create", "gmail.users.drafts.update",
-)):
+elif "gmail" in args and ("send" in args or "drafts" in args):
     print('{"id":"result-123","threadId":"thread-456"}')
 else:
     raise SystemExit("unexpected gog command")

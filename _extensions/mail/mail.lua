@@ -351,7 +351,7 @@ end
 
 local final_artifacts = {
   "message.eml",
-  "gmail-request.json",
+  "delivery.json",
 }
 
 local function remove_final_artifacts(directory)

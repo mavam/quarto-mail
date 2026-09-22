@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
+import os
+import shlex
 import subprocess
 import sys
+import tempfile
 import unittest
 from email import policy
 from email.message import EmailMessage
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_extensions" / "mail"))
@@ -152,6 +157,69 @@ class PreviewTests(unittest.TestCase):
         self.message.set_content("<p>HTML only</p>", subtype="html")
         with self.assertRaisesRegex(ValueError, "no plain-text preview"):
             self.preview()
+
+
+class DeliveryScriptTests(unittest.TestCase):
+    def setUp(self) -> None:
+        message = EmailMessage(policy=policy.SMTP)
+        message["From"] = "Alex Example <alex@example.com>"
+        message["To"] = "Jane Example <jane@example.com>"
+        message["Subject"] = "Project update"
+        message.set_content("A body.\n")
+        self.raw = message.as_bytes(policy=policy.SMTP)
+        self.manifest = {"account": "work@example.com", "delivery": "send"}
+
+    def script(self, delivery_options=None) -> bytes:
+        return delivery.delivery_script(self.manifest, self.raw, delivery_options or {})
+
+    def invocation(self, delivery_options=None) -> list[str]:
+        return shlex.split(self.script(delivery_options).decode().splitlines()[4].split(" <<")[0])
+
+    def test_every_delivery_maps_to_one_gog_command(self) -> None:
+        cases = [
+            ({}, {}, ["gmail", "send"]),
+            ({}, {"thread_id": "thread-456"}, ["gmail", "send", "--raw-file", "-", "--thread-id", "thread-456"]),
+            ({"delivery": "draft"}, {}, ["gmail", "drafts", "create"]),
+            ({"delivery": "draft", "draft_id": "draft-123"}, {}, ["gmail", "drafts", "update", "draft-123"]),
+        ]
+        for manifest, options, expected in cases:
+            with self.subTest(expected=expected):
+                self.manifest.update(manifest)
+                invocation = self.invocation(options)
+                self.assertEqual(invocation[:3], ["gog", "--account", "work@example.com"])
+                self.assertEqual(invocation[3:3 + len(expected)], expected)
+                self.assertIn("-", invocation[invocation.index("--raw-file") + 1:])
+                self.assertEqual(invocation[-3:], ["--json", "--force", "--no-input"])
+
+    def test_script_delivers_the_exact_message_over_stdin(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="quarto-mail-script-") as temporary:
+            workspace = Path(temporary)
+            received = workspace / "received.eml"
+            (workspace / "gog").write_text(f'#!/bin/sh\ncat > {received}\n')
+            (workspace / "gog").chmod(0o700)
+            script = workspace / "message.send.sh"
+            script.write_bytes(self.script())
+            result = subprocess.run(
+                ["sh", str(script)], capture_output=True, text=True, check=False,
+                env={**os.environ, "PATH": f"{workspace}:{os.environ['PATH']}"},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(received.read_bytes(), self.raw)
+
+    def test_terminator_is_derived_from_the_message_and_never_collides(self) -> None:
+        terminator = delivery.heredoc_terminator(self.raw)
+        self.assertEqual(terminator, "QUARTO_MAIL_MESSAGE_" + hashlib.sha256(self.raw).hexdigest()[:16])
+        self.assertNotIn(terminator.encode(), self.raw)
+        # Only a forced digest can make the message contain its own terminator.
+        digest = SimpleNamespace(hexdigest=lambda: "0" * 64)
+        colliding = self.raw.replace(b"A body.", b"QUARTO_MAIL_MESSAGE_" + b"0" * 16)
+        with (patch.object(delivery.hashlib, "sha256", return_value=digest),
+              self.assertRaisesRegex(ValueError, "collides")):
+            delivery.delivery_script(self.manifest, colliding, {})
+
+    def test_script_rejects_a_message_without_a_final_newline(self) -> None:
+        with self.assertRaisesRegex(ValueError, "newline"):
+            delivery.delivery_script(self.manifest, self.raw.rstrip(b"\r\n"), {})
 
 
 if __name__ == "__main__":
