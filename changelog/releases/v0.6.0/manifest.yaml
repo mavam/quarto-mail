@@ -1,5 +1,5 @@
 created: 2026-09-22
-title: 'Quarto Mail v0.6.0: Native Gmail delivery'
+title: Native Gmail delivery
 intro: >-
   Delivery scripts now hand the approved message to gog's Gmail commands instead of
   raw API requests, so the message you approve is readable RFC822 in the script itself
