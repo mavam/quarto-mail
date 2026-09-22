@@ -331,6 +331,9 @@ headers, and stable message IDs and multipart boundaries.
 - Authenticated gog when rendering replies or forwards.
 - A POSIX shell and authenticated gog 0.41 or later to run the delivery script.
 
+Rendering and delivery use only `gog gmail` commands, so a gog restricted with
+`--enable-commands gmail` remains sufficient.
+
 ## 📄 License
 
 [MIT](LICENSE)

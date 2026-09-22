@@ -17,9 +17,10 @@ if os.environ.get("FAKE_GOG_LOG"):
 if os.environ.get("FAKE_GOG_FAIL"):
     print("synthetic Gmail failure", file=sys.stderr)
     raise SystemExit(7)
-if "gmail.users.messages.get" in args:
+if "show" in args:
     assert "--readonly" in args
-    print(Path(os.environ["FAKE_GMAIL_RESPONSE"]).read_text())
+    # gog reports a fetched message inside an envelope.
+    print(json.dumps({"headers": {}, "message": json.loads(Path(os.environ["FAKE_GMAIL_RESPONSE"]).read_text())}))
 elif "gmail" in args and ("send" in args or "drafts" in args):
     print('{"id":"result-123","threadId":"thread-456"}')
 else:

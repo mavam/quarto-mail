@@ -268,8 +268,10 @@ def sanitize_mime_filename(filename: str | None) -> str | None:
 
 
 def reply_context(response: dict[str, Any]) -> dict[str, Any]:
-    if "raw" not in response and isinstance(response.get("result"), dict):
-        response = response["result"]
+    # gog reports a message inside a result or message envelope.
+    for envelope in ("result", "message"):
+        if "raw" not in response and isinstance(response.get(envelope), dict):
+            response = response[envelope]
     raw_value = response.get("raw")
     thread_id = response.get("threadId")
     if not isinstance(raw_value, str) or raw_value == "":
@@ -587,9 +589,7 @@ def fetch_original(manifest: dict[str, Any]) -> dict[str, Any] | None:
     result = subprocess.run(
         [
             "gog", "--readonly", "--account", manifest["account"],
-            "api", "call", "gmail", "v1", "gmail.users.messages.get",
-            "--params", json.dumps({"userId": "me", "id": message_id, "format": "raw"}),
-            "--no-input",
+            "gmail", "show", message_id, "--format", "raw", "--json", "--no-input",
         ],
         stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )

@@ -185,6 +185,7 @@ class QuartoMailTests(unittest.TestCase):
         calls = self.calls()
         self.assertEqual(len(calls), 1)
         self.assertIn("--readonly", calls[0]["args"])
+        self.assertEqual(self.command(calls[0])[:3], ["gmail", "show", "message-123"])
         self.send()
         call = self.calls()[-1]
         self.assertEqual(call["args"][call["args"].index("--thread-id") + 1], "thread-456")
@@ -252,7 +253,7 @@ class QuartoMailTests(unittest.TestCase):
         self.assertIn("Thank you", plain.stdout)
         self.render("--to", "mail-html", "--quiet")
         self.assertTrue((self.project / "message.html").exists())
-        self.assertTrue(all("gmail.users.messages.get" in call["args"] for call in self.calls()))
+        self.assertTrue(all(self.command(call)[:2] == ["gmail", "show"] for call in self.calls()))
 
     def test_failed_read_invalidates_old_delivery_script(self) -> None:
         self.write_source("reply")
