@@ -1,6 +1,6 @@
 title: Mail
 author: Matthias Vallentin
-version: 0.1.0
+version: 0.6.0
 quarto-required: ">=1.4.0"
 contributes:
   formats:

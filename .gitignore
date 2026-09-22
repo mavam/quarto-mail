@@ -5,6 +5,7 @@ __pycache__/
 *.eml
 .quarto-mail-*.qmd
 *.sh
+!.github/scripts/*.sh
 /*.html
 .DS_Store
 
