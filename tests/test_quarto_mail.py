@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
+EXTENSIONS = Path(os.environ.get("QUARTO_MAIL_EXTENSION_ROOT", str(ROOT / "_extensions")))
 
 
 def decode_raw(request):
@@ -30,7 +31,7 @@ class QuartoMailTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="quarto-mail-test-")
         self.addCleanup(temporary.cleanup)
         self.project = Path(temporary.name)
-        shutil.copytree(ROOT / "_extensions", self.project / "_extensions")
+        shutil.copytree(EXTENSIONS, self.project / "_extensions")
         shutil.copy(ROOT / "_metadata.yml", self.project / "_metadata.yml")
         (self.project / "_quarto.yml").write_text("project:\n  type: default\n")
         self.source = self.project / "message.qmd"
@@ -215,6 +216,34 @@ class QuartoMailTests(unittest.TestCase):
             "<div>Hi Jane,</div>\n<div><br></div>\n"
             "<!-- Visible HTML follows. -->\n<div>Visible <strong>HTML</strong>.</div>",
             self.body("html"),
+        )
+
+    def test_linked_extension_files_survive_template_copy(self) -> None:
+        self.source.write_text((ROOT / "template.qmd").read_text())
+        extension = self.project / "_extensions" / "mail"
+        shutil.rmtree(extension)
+        original = EXTENSIONS / "mail"
+        for path in original.rglob("*"):
+            target = extension / path.relative_to(original)
+            if path.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.symlink_to(path)
+        workspace = tempfile.TemporaryDirectory(prefix="quarto-mail-draft-")
+        self.addCleanup(workspace.cleanup)
+        draft = Path(workspace.name)
+        installed = subprocess.run(
+            ["quarto", "use", "template", str(self.project), "--no-prompt"],
+            cwd=draft, env=self.env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        self.render_gog(source=draft / "message.qmd")
+        html = (draft / "message.mail" / "body.html").read_text()
+        self.assertIn(
+            "<div>Hi Jane,</div>\n<div><br></div>\n"
+            "<div>Write the message body in Markdown.</div>",
+            html,
         )
 
     def test_preview_file_and_stdout_modes(self) -> None:
