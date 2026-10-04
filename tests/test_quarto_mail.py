@@ -219,9 +219,12 @@ class QuartoMailTests(unittest.TestCase):
         )
 
     def test_linked_extension_files_survive_template_copy(self) -> None:
-        self.source.write_text((ROOT / "template.qmd").read_text())
-        extension = self.project / "_extensions" / "mail"
-        shutil.rmtree(extension)
+        starter = self.project / "starter"
+        starter.mkdir()
+        shutil.copy(self.project / "_metadata.yml", starter / "_metadata.yml")
+        shutil.copy(self.project / "_quarto.yml", starter / "_quarto.yml")
+        (starter / "message.qmd").write_text((ROOT / "template.qmd").read_text())
+        extension = starter / "_extensions" / "mail"
         original = EXTENSIONS / "mail"
         for path in original.rglob("*"):
             target = extension / path.relative_to(original)
@@ -234,7 +237,7 @@ class QuartoMailTests(unittest.TestCase):
         self.addCleanup(workspace.cleanup)
         draft = Path(workspace.name)
         installed = subprocess.run(
-            ["quarto", "use", "template", str(self.project), "--no-prompt"],
+            ["quarto", "use", "template", str(starter), "--no-prompt"],
             cwd=draft, env=self.env, capture_output=True, text=True, check=False,
         )
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
