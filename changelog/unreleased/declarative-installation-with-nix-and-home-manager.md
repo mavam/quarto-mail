@@ -1,6 +1,8 @@
 ---
 title: Declarative installation with Nix and Home Manager
 type: feature
+prs:
+  - 14
 authors:
   - mavam
 created: 2026-10-04T07:00:56.993357Z
