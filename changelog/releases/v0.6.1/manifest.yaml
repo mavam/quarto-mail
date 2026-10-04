@@ -1,0 +1,9 @@
+created: 2026-10-04
+title: Reliable email spacing and extension updates
+intro: >-
+  HTML emails now keep normal paragraph spacing around authoring comments and format-specific
+  content. Quarto extension manifests report the correct release version so updates
+  can discover new releases.
+source:
+  mode: sync-stable-queue
+  previous_stable: v0.6.0
