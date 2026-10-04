@@ -1,6 +1,8 @@
 ---
 title: Consistent spacing around HTML comments
 type: bugfix
+prs:
+  - 13
 authors:
   - mavam
 created: 2026-10-04T06:05:26.398644Z
