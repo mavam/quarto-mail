@@ -138,6 +138,85 @@ class QuartoMailTests(unittest.TestCase):
         self.send(script=copied)
         self.assertEqual(len(self.calls()), 2)  # Each invocation attempts delivery.
 
+    def test_html_comments_do_not_change_spacing_or_indentation(self) -> None:
+        source = (ROOT / "template.qmd").read_text()
+        source = source.replace("  closing: Best,\n", "")
+        source = source.replace("  identity: personal", "  identity: formal")
+        source = source.replace(
+            "Write the message body in Markdown.",
+            "First paragraph.\n\n<!-- Between paragraphs. -->\n"
+            "<!-- Another comment. -->\n\nSecond paragraph.\n\n<!-- Trailing comment. -->",
+        )
+        self.source.write_text(source)
+        self.render_gog()
+        self.assertEqual(
+            self.body("html"),
+            "<div>\n<div>Hi Jane,</div>\n<div><br></div>\n"
+            "<div>First paragraph.</div>\n<div><br></div>\n"
+            "<div>Second paragraph.</div>\n<div><br></div>\n"
+            "<div>&nbsp;&nbsp;&nbsp;&nbsp;Alex Example</div>\n</div>\n",
+        )
+        self.assertEqual(
+            self.body("plain"),
+            "Hi Jane,\n\nFirst paragraph.\n\nSecond paragraph.\n\n    Alex Example\n",
+        )
+
+    def test_non_html_blocks_do_not_add_html_spacing(self) -> None:
+        source = (ROOT / "template.qmd").read_text().replace(
+            "Write the message body in Markdown.",
+            "First paragraph.\n\n```{=plain}\nPlain-only content.\n```\n\nSecond paragraph.",
+        )
+        self.source.write_text(source)
+        self.render_gog()
+        self.assertIn(
+            "<div>First paragraph.</div>\n<div><br></div>\n<div>Second paragraph.</div>",
+            self.body("html"),
+        )
+        self.assertNotIn("Plain-only content.", self.body("html"))
+        self.assertIn("Plain-only content.", self.body("plain"))
+
+    def test_comment_only_inlines_do_not_add_html_spacing(self) -> None:
+        source = (ROOT / "template.qmd").read_text().replace(
+            "Write the message body in Markdown.",
+            "`<!-- Inline authoring comment. -->`{=html}\n\nFirst paragraph.",
+        )
+        self.source.write_text(source)
+        self.render_gog()
+        self.assertIn(
+            "<div>Hi Jane,</div>\n<div><br></div>\n<div>First paragraph.</div>",
+            self.body("html"),
+        )
+
+    def test_invisible_fragments_leave_list_spacing_unchanged(self) -> None:
+        source = (ROOT / "template.qmd").read_text().replace(
+            "Write the message body in Markdown.",
+            "First paragraph.\n\n- A list item.\n\nSecond paragraph.",
+        )
+        self.source.write_text(source)
+        self.render_gog()
+        expected = self.body("html")
+        self.source.write_text(source.replace(
+            "- A list item.",
+            "<!-- Before the list. -->\n\n- A list item.\n\n"
+            "```{=latex}\nNot HTML content.\n```\n\n<!-- After the list. -->",
+        ))
+        self.render_gog()
+        self.assertEqual(self.body("html"), expected)
+
+    def test_raw_html_with_comments_is_preserved(self) -> None:
+        source = (ROOT / "template.qmd").read_text().replace(
+            "Write the message body in Markdown.",
+            "```{=html}\n<!-- Visible HTML follows. -->\n"
+            "<div>Visible <strong>HTML</strong>.</div>\n```",
+        )
+        self.source.write_text(source)
+        self.render_gog()
+        self.assertIn(
+            "<div>Hi Jane,</div>\n<div><br></div>\n"
+            "<!-- Visible HTML follows. -->\n<div>Visible <strong>HTML</strong>.</div>",
+            self.body("html"),
+        )
+
     def test_preview_file_and_stdout_modes(self) -> None:
         self.write_source()
         result = self.render("--to", "mail-gog")
