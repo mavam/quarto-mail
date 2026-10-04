@@ -28,6 +28,44 @@ quarto add mavam/quarto-mail
 Install and authenticate [`gog`](https://github.com/steipete/gogcli) for rendering
 replies or forwards and for delivery.
 
+### Declarative installation with Nix
+
+The flake provides `packages.<system>.default` and
+`homeManagerModules.default`. Add the input to your configuration flake:
+
+```nix
+inputs.quarto-mail = {
+  url = "github:mavam/quarto-mail";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+```
+
+Then import and enable the Home Manager module:
+
+```nix
+{ inputs, ... }: {
+  imports = [ inputs.quarto-mail.homeManagerModules.default ];
+  programs.quarto-mail = {
+    enable = true;
+    templateDirectory = "/home/alex/mail-template";
+  };
+}
+```
+
+The default template directory is `$XDG_DATA_HOME/quarto-mail`. The module
+manages only `_extensions/mail/`; keep your sender profiles and message skeleton
+in that directory separately. Install Quarto, Python 3, and gog through your
+existing environment.
+
+Move any existing unmanaged extension installation outside the template before
+the first activation. Don't run `quarto add` or `quarto update` against the
+Nix-managed extension. Update the input's lock and activate your configuration
+instead; rendering never updates dependencies.
+
+The Nix package reads its version from the extension manifest. The existing
+release hook updates that single source of truth before tagging, so releases
+don't need a separate Nix version bump or a release-tracking branch.
+
 ## ✨ Usage
 
 ### Configure a sender

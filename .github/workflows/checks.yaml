@@ -49,3 +49,30 @@ jobs:
 
       - name: Run tests
         run: python3 -m unittest discover -s tests -v
+
+  nix:
+    name: Nix installation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31.11.1
+
+      - name: Check the flake and Home Manager module
+        run: nix flake check
+
+      - name: Test the installed extension
+        run: |
+          package="$(nix build --no-link --print-out-paths)"
+          export QUARTO_MAIL_EXTENSION_ROOT="$package/share/quarto-mail/_extensions"
+          python3 -m unittest discover -s tests -v

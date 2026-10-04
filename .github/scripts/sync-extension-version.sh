@@ -3,7 +3,8 @@
 #
 # The release workflow runs this as its post-create hook, before the release
 # commit is staged, so the tag carries the version it announces. Quarto reads
-# this field to decide whether `quarto update` has anything to fetch.
+# this field to decide whether `quarto update` has anything to fetch. The Nix
+# package reads the same manifest, so this also versions the flake's package.
 
 set -eu
 
