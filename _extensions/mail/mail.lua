@@ -374,19 +374,20 @@ local function html_escape(value)
 end
 
 local function render_block_html(block)
-  if block.tag == "Para" or block.tag == "Plain" then
-    local html = pandoc.write(
-      pandoc.Pandoc({ pandoc.Plain(block.content) }),
-      "html",
-      { wrap_text = "none" }
-    ):gsub("\n+$", "")
-    return "<div>" .. html .. "</div>"
-  end
-  return pandoc.write(
-    pandoc.Pandoc({ block }),
+  local paragraph = block.tag == "Para" or block.tag == "Plain"
+  local html = pandoc.write(
+    pandoc.Pandoc({ paragraph and pandoc.Plain(block.content) or block }),
     "html",
     { wrap_text = "none" }
   ):gsub("\n+$", "")
+  -- Only rendered content participates in layout, before paragraph wrapping.
+  if html:gsub("<!%-%-.-%-%->", ""):match("^%s*$") then
+    return nil
+  end
+  if paragraph then
+    return "<div>" .. html .. "</div>"
+  end
+  return html
 end
 
 local function transport_blocks(message_blocks, inline_images, source_directory)
@@ -427,10 +428,13 @@ local function render_email_html(
     })
   end
   for _, block in ipairs(message_blocks) do
-    table.insert(sections, {
-      html = render_block_html(block),
-      native_spacing = block.tag == "BulletList" or block.tag == "OrderedList",
-    })
+    local html = render_block_html(block)
+    if html ~= nil then
+      table.insert(sections, {
+        html = html,
+        native_spacing = block.tag == "BulletList" or block.tag == "OrderedList",
+      })
+    end
   end
   if closing ~= nil then
     table.insert(sections, {
