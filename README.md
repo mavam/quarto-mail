@@ -25,7 +25,7 @@ To add the extension to an existing Quarto project:
 quarto add mavam/quarto-mail
 ```
 
-Install and authenticate [`gog`](https://github.com/steipete/gogcli) for rendering
+Install and authenticate [`gog`](https://github.com/openclaw/gogcli) for rendering
 replies or forwards and for delivery.
 
 ### Declarative installation with Nix

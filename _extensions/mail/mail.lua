@@ -385,7 +385,7 @@ local function render_block_html(block)
     return nil
   end
   if paragraph then
-    return "<div>" .. html .. "</div>"
+    return '<div dir="auto">' .. html .. "</div>"
   end
   return html
 end
@@ -423,7 +423,7 @@ local function render_email_html(
   local sections = {}
   if opening ~= nil then
     table.insert(sections, {
-      html = "<div>" .. html_escape(opening) .. "</div>",
+      html = '<div dir="auto">' .. html_escape(opening) .. "</div>",
       native_spacing = false,
     })
   end
@@ -438,13 +438,13 @@ local function render_email_html(
   end
   if closing ~= nil then
     table.insert(sections, {
-      html = "<div>" .. html_escape(closing) .. "</div>",
+      html = '<div dir="auto">' .. html_escape(closing) .. "</div>",
       native_spacing = false,
     })
   end
   if identity ~= nil then
     table.insert(sections, {
-      html = "<div>" .. string.rep("&nbsp;", identity_indent) ..
+      html = '<div dir="auto">' .. string.rep("&nbsp;", identity_indent) ..
         html_escape(identity) .. "</div>",
       native_spacing = false,
     })
@@ -456,7 +456,7 @@ local function render_email_html(
       html = prefix .. html_escape(signature_plain):gsub("\n", "<br>" .. prefix)
     end
     table.insert(sections, {
-      html = "<div>" .. html .. "</div>",
+      html = '<div dir="auto">' .. html .. "</div>",
       native_spacing = false,
     })
   end
@@ -470,7 +470,7 @@ local function render_email_html(
     end
     table.insert(html, section.html)
   end
-  return "<div>\n" .. table.concat(html, "\n") .. "\n</div>\n"
+  return '<div dir="auto">\n' .. table.concat(html, "\n") .. "\n</div>\n"
 end
 
 local function render_document(document, source, source_directory, bundle_directory)

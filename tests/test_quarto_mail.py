@@ -281,6 +281,38 @@ class QuartoMailTests(unittest.TestCase):
         self.assertTrue((nested / "message.send.sh").exists())
         self.send(script=nested / "message.send.sh")
 
+    def test_attachment_ids_are_unique_stable_and_preserve_inline_cids(self) -> None:
+        def duplicate(text):
+            lines = text.splitlines()
+            attachment = next(line for line in lines if "attachment~path~.txt" in line)
+            return text.replace(attachment, attachment + "\n" + attachment)
+
+        self.write_source(transform=duplicate)
+        self.render_gog()
+        first = (self.bundle / "message.eml").read_bytes()
+        parts = [part for part in self.message().walk()
+                 if part.get_content_disposition() in ("attachment", "inline")]
+        ids = [str(part["X-Attachment-Id"]) for part in parts]
+        self.assertEqual(len(ids), 3)
+        self.assertEqual(len(set(ids)), len(ids))
+        self.assertNotIn("None", ids)
+        for part in parts:
+            if part.get_content_disposition() == "attachment":
+                self.assertEqual(str(part["Content-ID"]), f"<{part['X-Attachment-Id']}>")
+            else:
+                cid = str(part["Content-ID"]).strip("<>")
+                self.assertIn(f"cid:{cid}", self.body("html"))
+        self.render_gog()
+        self.assertEqual((self.bundle / "message.eml").read_bytes(), first)
+
+    def test_mixed_direction_author_content(self) -> None:
+        self.write_source(transform=lambda text: text + "\nשלום עולם\n\nEnglish paragraph.\n")
+        self.render_gog()
+        html = self.body("html")
+        self.assertIn('<div dir="auto">שלום עולם</div>', html)
+        self.assertIn('<div dir="auto">English paragraph.</div>', html)
+        self.assertTrue(html.startswith('<div dir="auto">'))
+
     def test_complete_reply_and_threaded_send(self) -> None:
         self.write_source("reply")
         result = self.render_gog()
@@ -325,6 +357,12 @@ class QuartoMailTests(unittest.TestCase):
         self.assertIn("Forwarded message", result.stdout)
         self.assertIn("Original plain body", result.stdout)
         self.assertIn("original.pdf", result.stdout)
+        forwarded = next(part for part in self.message().walk() if part.get_filename() == "original.pdf")
+        self.assertEqual(str(forwarded["Content-ID"]), f"<{forwarded['X-Attachment-Id']}>")
+        quoted = next(part for part in self.message().walk()
+                      if str(part.get("Content-ID", "")).startswith("<quoted-"))
+        self.assertIsNotNone(quoted["X-Attachment-Id"])
+        self.assertIn(f"cid:{str(quoted['Content-ID']).strip('<>')}", self.body("html"))
         self.assertIsNone(self.message()["In-Reply-To"])
         self.send()
         self.assertNotIn("--thread-id", self.calls()[-1]["args"])

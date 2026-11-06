@@ -15,7 +15,7 @@ from email.headerregistry import Address, HeaderRegistry
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.policy import SMTP, default
-from email.utils import formatdate, getaddresses
+from email.utils import formatdate, getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, ClassVar
@@ -235,7 +235,7 @@ def html_fragment(value: str) -> str:
 
 def plain_to_html(value: str) -> str:
     escaped = html.escape(normalize_text(value).strip("\n"))
-    return escaped.replace("\n", "<br>\n")
+    return "\n".join(f'<div dir="auto">{line or "<br>"}</div>' for line in escaped.split("\n"))
 
 
 def body_content(message: EmailMessage, subtype: str) -> str | None:
@@ -295,7 +295,7 @@ def reply_context(response: dict[str, Any]) -> dict[str, Any]:
     original_html = body_content(original, "html")
     if original_plain is None and original_html is None:
         raise ValueError("the original message has no readable plain-text or HTML body")
-    if original_plain is None:
+    if original_plain is None or (not original_plain.strip() and original_html is not None):
         original_plain = html_to_text(original_html or "")
     quoted_inline_images: list[dict[str, Any]] = []
     if original_html is None:
@@ -370,13 +370,47 @@ def reply_context(response: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def quote_date(value: str) -> str:
+    # Keep the original timezone and use fixed English names, independent of locale.
+    try:
+        date = parsedate_to_datetime(value)
+    except (ValueError, TypeError, OverflowError):
+        return value
+    weekdays = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    return (
+        f"{weekdays[date.weekday()]}, {months[date.month - 1]} {date.day}, {date.year} "
+        f"at {date.hour % 12 or 12}:{date.minute:02d}\u202f{'AM' if date.hour < 12 else 'PM'}"
+    )
+
+
+def quote_addresses(value: str, *, as_html: bool = False, bold_name: bool = False) -> str:
+    addresses = getaddresses([value])
+    if not addresses or not any(address for _, address in addresses):
+        return html.escape(value) if as_html else value
+    result = []
+    for name, address in addresses:
+        if as_html:
+            display_name = html.escape(name)
+            if bold_name and name:
+                display_name = f"<b>{display_name}</b>"
+            linked = f'<a href="mailto:{html.escape(address, quote=True)}">{html.escape(address)}</a>'
+            mailbox = f"&lt;{linked}&gt;"
+        else:
+            display_name = name
+            mailbox = f"<{address}>"
+        result.append(f"{display_name} {mailbox}" if name else mailbox)
+    return ", ".join(result)
+
+
 def quote_bodies(plain: str, html_body: str, context: dict[str, Any]) -> tuple[str, str]:
-    attribution = f"On {context['date']}, {context['from']} wrote:"
+    date = quote_date(context["date"])
+    attribution = f"On {date} {quote_addresses(context['from'])} wrote:"
     quoted_plain = "\n".join(
         ">" if line == "" else f"> {line}" for line in context["plain"].split("\n")
     )
     plain = plain.rstrip("\n") + "\n\n" + attribution + "\n" + quoted_plain + "\n"
-    attribution_html = html.escape(attribution)
+    attribution_html = f"On {html.escape(date)} {quote_addresses(context['from'], as_html=True)} wrote:"
     quoted_html = (
         '<div class="gmail_quote">'
         f'<div dir="ltr" class="gmail_attr">{attribution_html}<br></div>'
@@ -401,16 +435,25 @@ def forward_bodies(
 ) -> tuple[str, str]:
     header_lines = [
         "---------- Forwarded message ---------",
-        f"From: {context['from']}",
-        f"Date: {context['date']}",
+        f"From: {quote_addresses(context['from'])}",
+        f"Date: {quote_date(context['date'])}",
         f"Subject: {context['subject']}",
-        f"To: {', '.join(context['to'])}",
+        f"To: {quote_addresses(', '.join(context['to']))}",
     ]
     if context["cc"]:
-        header_lines.append(f"Cc: {', '.join(context['cc'])}")
+        header_lines.append(f"Cc: {quote_addresses(', '.join(context['cc']))}")
     header = "\n".join(header_lines)
-    forwarded_plain = plain.rstrip() + "\n\n" + header + "\n\n" + context["plain"] + "\n"
-    forwarded_header = html.escape(header).replace("\n", "<br>")
+    forwarded_plain = plain.rstrip() + "\n\n" + header + "\n\n\n" + context["plain"] + "\n"
+    html_lines = [
+        header_lines[0],
+        f"From: {quote_addresses(context['from'], as_html=True, bold_name=True)}",
+        f"Date: {html.escape(quote_date(context['date']))}",
+        f"Subject: {html.escape(context['subject'])}",
+        f"To: {quote_addresses(', '.join(context['to']), as_html=True)}",
+    ]
+    if context["cc"]:
+        html_lines.append(f"Cc: {quote_addresses(', '.join(context['cc']), as_html=True)}")
+    forwarded_header = '<div dir="ltr" class="gmail_attr">' + "<br>".join(html_lines) + "</div>"
     forwarded_html = (
         html_body.rstrip()
         + f'<br><br><div class="gmail_quote">{forwarded_header}'
@@ -542,6 +585,16 @@ def build_message(
             filename=path.name,
             disposition="attachment",
         )
+
+    # Identify each part deterministically, including repeated identical files.
+    attachments = [part for part in message.walk()
+                   if not part.is_multipart() and part.get_content_disposition() in ("inline", "attachment")]
+    for index, part in enumerate(attachments):
+        payload_hash = hashlib.sha256(part.get_payload(decode=True) or b"").hexdigest()[:32]
+        attachment_id = f"f_{index:016x}{payload_hash}"
+        part["X-Attachment-Id"] = attachment_id
+        if part.get_content_disposition() == "attachment":
+            part["Content-ID"] = f"<{attachment_id}>"
 
     digest = content_digest(message, thread_id)
     message["Message-ID"] = f"<{digest}@quarto-mail>"
