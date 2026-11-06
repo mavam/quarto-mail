@@ -1,0 +1,9 @@
+created: 2026-11-06
+title: Reliable email rendering and declarative installation
+intro: >-
+  Quarto Mail preserves readable reply text, attachment identities, and text direction
+  while improving Gmail-style quote headers. You can now install the extension declaratively
+  with Nix and Home Manager.
+source:
+  mode: sync-stable-queue
+  previous_stable: v0.6.1
