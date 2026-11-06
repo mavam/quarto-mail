@@ -152,10 +152,10 @@ class QuartoMailTests(unittest.TestCase):
         self.render_gog()
         self.assertEqual(
             self.body("html"),
-            "<div>\n<div>Hi Jane,</div>\n<div><br></div>\n"
-            "<div>First paragraph.</div>\n<div><br></div>\n"
-            "<div>Second paragraph.</div>\n<div><br></div>\n"
-            "<div>&nbsp;&nbsp;&nbsp;&nbsp;Alex Example</div>\n</div>\n",
+            "<div dir=\"ltr\">\n<div dir=\"auto\">Hi Jane,</div>\n<div><br></div>\n"
+            "<div dir=\"auto\">First paragraph.</div>\n<div><br></div>\n"
+            "<div dir=\"auto\">Second paragraph.</div>\n<div><br></div>\n"
+            "<div dir=\"auto\">&nbsp;&nbsp;&nbsp;&nbsp;Alex Example</div>\n</div>\n",
         )
         self.assertEqual(
             self.body("plain"),
@@ -170,7 +170,7 @@ class QuartoMailTests(unittest.TestCase):
         self.source.write_text(source)
         self.render_gog()
         self.assertIn(
-            "<div>First paragraph.</div>\n<div><br></div>\n<div>Second paragraph.</div>",
+            "<div dir=\"auto\">First paragraph.</div>\n<div><br></div>\n<div dir=\"auto\">Second paragraph.</div>",
             self.body("html"),
         )
         self.assertNotIn("Plain-only content.", self.body("html"))
@@ -184,7 +184,7 @@ class QuartoMailTests(unittest.TestCase):
         self.source.write_text(source)
         self.render_gog()
         self.assertIn(
-            "<div>Hi Jane,</div>\n<div><br></div>\n<div>First paragraph.</div>",
+            "<div dir=\"auto\">Hi Jane,</div>\n<div><br></div>\n<div dir=\"auto\">First paragraph.</div>",
             self.body("html"),
         )
 
@@ -213,7 +213,7 @@ class QuartoMailTests(unittest.TestCase):
         self.source.write_text(source)
         self.render_gog()
         self.assertIn(
-            "<div>Hi Jane,</div>\n<div><br></div>\n"
+            "<div dir=\"auto\">Hi Jane,</div>\n<div><br></div>\n"
             "<!-- Visible HTML follows. -->\n<div>Visible <strong>HTML</strong>.</div>",
             self.body("html"),
         )
@@ -244,8 +244,8 @@ class QuartoMailTests(unittest.TestCase):
         self.render_gog(source=draft / "message.qmd")
         html = (draft / "message.mail" / "body.html").read_text()
         self.assertIn(
-            "<div>Hi Jane,</div>\n<div><br></div>\n"
-            "<div>Write the message body in Markdown.</div>",
+            "<div dir=\"auto\">Hi Jane,</div>\n<div><br></div>\n"
+            "<div dir=\"auto\">Write the message body in Markdown.</div>",
             html,
         )
 
@@ -280,6 +280,81 @@ class QuartoMailTests(unittest.TestCase):
         self.assertIn("≡ Project üpdate", result.stdout)
         self.assertTrue((nested / "message.send.sh").exists())
         self.send(script=nested / "message.send.sh")
+
+    def test_attachment_ids_are_unique_stable_and_preserve_inline_cids(self) -> None:
+        def duplicate(text):
+            lines = text.splitlines()
+            attachment = next(line for line in lines if "attachment~path~.txt" in line)
+            return text.replace(attachment, attachment + "\n" + attachment)
+
+        self.write_source(transform=duplicate)
+        self.render_gog()
+        first = (self.bundle / "message.eml").read_bytes()
+        parts = [part for part in self.message().walk()
+                 if part.get_content_disposition() in ("attachment", "inline")]
+        ids = [str(part["X-Attachment-Id"]) for part in parts]
+        self.assertEqual(len(ids), 3)
+        self.assertEqual(len(set(ids)), len(ids))
+        self.assertNotIn("None", ids)
+        for part in parts:
+            if part.get_content_disposition() == "attachment":
+                self.assertEqual(str(part["Content-ID"]), f"<{part['X-Attachment-Id']}>")
+            else:
+                cid = str(part["Content-ID"]).strip("<>")
+                self.assertIn(f"cid:{cid}", self.body("html"))
+        self.render_gog()
+        self.assertEqual((self.bundle / "message.eml").read_bytes(), first)
+
+    def test_mixed_direction_author_content(self) -> None:
+        self.write_source(transform=lambda text: text + "\nשלום עולם\n\nEnglish paragraph.\n")
+        self.render_gog()
+        html = self.body("html")
+        self.assertIn('<div dir="auto">שלום עולם</div>', html)
+        self.assertIn('<div dir="auto">English paragraph.</div>', html)
+        self.assertTrue(html.startswith('<div dir="ltr">'))
+
+    def test_rtl_heading_does_not_set_list_or_code_direction(self) -> None:
+        self.source.write_text('''---
+format: mail-gog
+mail:
+  sender: personal
+  to: [user@example.com]
+  subject: Direction regression
+---
+
+# שלום עולם
+
+- English item.
+- שלום
+
+1. English numbered item.
+2. Another item.
+
+```text
+echo "English code."
+```
+
+> ```text
+> echo "Nested code."
+> ```
+
+## Explicit heading {dir="ltr"}
+
+English with `code.` inline.
+''')
+        self.render_gog()
+        html = self.body("html")
+        self.assertTrue(html.startswith('<div dir="ltr">'))
+        self.assertRegex(html, r'<h1[^>]*dir="auto"[^>]*>שלום עולם</h1>')
+        self.assertIn('<div dir="auto"><ul>', html)
+        self.assertIn('<li dir="auto">English item.</li>', html)
+        self.assertIn('<li dir="auto">שלום</li>', html)
+        self.assertIn('<div dir="auto"><ol', html)
+        self.assertIn('<li dir="auto">English numbered item.</li>', html)
+        self.assertRegex(html, r'<pre[^>]*dir="ltr"[^>]*><code[^>]*>echo &quot;English code\.&quot;')
+        self.assertRegex(html, r'<pre[^>]*dir="ltr"[^>]*><code[^>]*>echo &quot;Nested code\.&quot;')
+        self.assertRegex(html, r'<h2[^>]*dir="ltr"[^>]*>Explicit heading</h2>')
+        self.assertIn('<code dir="ltr">code.</code>', html)
 
     def test_complete_reply_and_threaded_send(self) -> None:
         self.write_source("reply")
@@ -325,6 +400,12 @@ class QuartoMailTests(unittest.TestCase):
         self.assertIn("Forwarded message", result.stdout)
         self.assertIn("Original plain body", result.stdout)
         self.assertIn("original.pdf", result.stdout)
+        forwarded = next(part for part in self.message().walk() if part.get_filename() == "original.pdf")
+        self.assertEqual(str(forwarded["Content-ID"]), f"<{forwarded['X-Attachment-Id']}>")
+        quoted = next(part for part in self.message().walk()
+                      if str(part.get("Content-ID", "")).startswith("<quoted-"))
+        self.assertIsNotNone(quoted["X-Attachment-Id"])
+        self.assertIn(f"cid:{str(quoted['Content-ID']).strip('<>')}", self.body("html"))
         self.assertIsNone(self.message()["In-Reply-To"])
         self.send()
         self.assertNotIn("--thread-id", self.calls()[-1]["args"])
