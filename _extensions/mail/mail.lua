@@ -375,19 +375,33 @@ end
 
 local function render_block_html(block)
   local paragraph = block.tag == "Para" or block.tag == "Plain"
-  local html = pandoc.write(
-    pandoc.Pandoc({ paragraph and pandoc.Plain(block.content) or block }),
-    "html",
-    { wrap_text = "none" }
-  ):gsub("\n+$", "")
+  local function direction(element, value)
+    -- Preserve explicit author choices, including on nested blocks.
+    if element.attributes.dir == nil then
+      element.attributes.dir = value
+    end
+    return element
+  end
+  local document = pandoc.Pandoc({ paragraph and pandoc.Plain(block.content) or block }):walk({
+    Header = function(element) return direction(element, "auto") end,
+    CodeBlock = function(element) return direction(element, "ltr") end,
+    Code = function(element) return direction(element, "ltr") end,
+  })
+  local html = pandoc.write(document, "html", { wrap_text = "none" }):gsub("\n+$", "")
   -- Only rendered content participates in layout, before paragraph wrapping.
   if html:gsub("<!%-%-.-%-%->", ""):match("^%s*$") then
     return nil
   end
-  if paragraph then
-    return '<div dir="auto">' .. html .. "</div>"
+  if block.tag == "RawBlock" then
+    return html
   end
-  return html
+  -- Each native block chooses its direction independently of preceding text.
+  -- List items also need their own direction for mixed-language lists.
+  if block.tag == "BulletList" or block.tag == "OrderedList" then
+    html = html:gsub("<li>", '<li dir="auto">')
+  end
+  local direction_value = block.tag == "CodeBlock" and "ltr" or "auto"
+  return '<div dir="' .. direction_value .. '">' .. html .. "</div>"
 end
 
 local function transport_blocks(message_blocks, inline_images, source_directory)
@@ -470,7 +484,7 @@ local function render_email_html(
     end
     table.insert(html, section.html)
   end
-  return '<div dir="auto">\n' .. table.concat(html, "\n") .. "\n</div>\n"
+  return '<div dir="ltr">\n' .. table.concat(html, "\n") .. "\n</div>\n"
 end
 
 local function render_document(document, source, source_directory, bundle_directory)

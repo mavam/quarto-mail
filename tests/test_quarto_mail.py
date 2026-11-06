@@ -152,7 +152,7 @@ class QuartoMailTests(unittest.TestCase):
         self.render_gog()
         self.assertEqual(
             self.body("html"),
-            "<div dir=\"auto\">\n<div dir=\"auto\">Hi Jane,</div>\n<div><br></div>\n"
+            "<div dir=\"ltr\">\n<div dir=\"auto\">Hi Jane,</div>\n<div><br></div>\n"
             "<div dir=\"auto\">First paragraph.</div>\n<div><br></div>\n"
             "<div dir=\"auto\">Second paragraph.</div>\n<div><br></div>\n"
             "<div dir=\"auto\">&nbsp;&nbsp;&nbsp;&nbsp;Alex Example</div>\n</div>\n",
@@ -311,7 +311,50 @@ class QuartoMailTests(unittest.TestCase):
         html = self.body("html")
         self.assertIn('<div dir="auto">שלום עולם</div>', html)
         self.assertIn('<div dir="auto">English paragraph.</div>', html)
-        self.assertTrue(html.startswith('<div dir="auto">'))
+        self.assertTrue(html.startswith('<div dir="ltr">'))
+
+    def test_rtl_heading_does_not_set_list_or_code_direction(self) -> None:
+        self.source.write_text('''---
+format: mail-gog
+mail:
+  sender: personal
+  to: [user@example.com]
+  subject: Direction regression
+---
+
+# שלום עולם
+
+- English item.
+- שלום
+
+1. English numbered item.
+2. Another item.
+
+```text
+echo "English code."
+```
+
+> ```text
+> echo "Nested code."
+> ```
+
+## Explicit heading {dir="ltr"}
+
+English with `code.` inline.
+''')
+        self.render_gog()
+        html = self.body("html")
+        self.assertTrue(html.startswith('<div dir="ltr">'))
+        self.assertRegex(html, r'<h1[^>]*dir="auto"[^>]*>שלום עולם</h1>')
+        self.assertIn('<div dir="auto"><ul>', html)
+        self.assertIn('<li dir="auto">English item.</li>', html)
+        self.assertIn('<li dir="auto">שלום</li>', html)
+        self.assertIn('<div dir="auto"><ol', html)
+        self.assertIn('<li dir="auto">English numbered item.</li>', html)
+        self.assertRegex(html, r'<pre[^>]*dir="ltr"[^>]*><code[^>]*>echo &quot;English code\.&quot;')
+        self.assertRegex(html, r'<pre[^>]*dir="ltr"[^>]*><code[^>]*>echo &quot;Nested code\.&quot;')
+        self.assertRegex(html, r'<h2[^>]*dir="ltr"[^>]*>Explicit heading</h2>')
+        self.assertIn('<code dir="ltr">code.</code>', html)
 
     def test_complete_reply_and_threaded_send(self) -> None:
         self.write_source("reply")
