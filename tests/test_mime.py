@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import base64
+import html
+import re
 import sys
 import unittest
 from email.message import EmailMessage
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_extensions" / "mail"))
 import mime
@@ -48,6 +51,27 @@ class QuoteTests(unittest.TestCase):
         escaped = mime.quote_addresses('"<script>&" <safe@example.com>', as_html=True, bold_name=True)
         self.assertIn("<b>&lt;script&gt;&amp;</b>", escaped)
         self.assertNotIn("<script>", escaped)
+
+    def test_mailto_links_encode_mailbox_delimiters(self):
+        for address in ("ops#eu@example.com", "ops?bcc=hidden@example.com",
+                        "ops%25@example.com", "ops&eu@example.com"):
+            with self.subTest(address=address):
+                rendered = mime.quote_addresses(address, as_html=True)
+                uri = html.unescape(re.search(r'href="([^"]+)"', rendered)[1])
+                parsed = urlsplit(uri)
+                self.assertEqual(parsed.scheme, "mailto")
+                self.assertEqual(parsed.query, "")
+                self.assertEqual(parsed.fragment, "")
+                self.assertEqual(unquote(parsed.path), address)
+                self.assertIn(f">{html.escape(address)}</a>", rendered)
+
+    def test_plain_to_html_preserves_whitespace_only_separators(self):
+        for separator in ("", "   ", "\t", " \t "):
+            with self.subTest(separator=separator):
+                context = self.context(f"One\n{separator}\nTwo", None)
+                self.assertEqual(context["html"], '<div dir="auto">One</div>\n'
+                                 '<div dir="auto"><br></div>\n<div dir="auto">Two</div>')
+                self.assertEqual(context["plain"], f"One\n{separator}\nTwo")
 
     def test_forward_header_and_spacing(self):
         text, html = mime.forward_bodies("Note", "<p>Note</p>", self.context())

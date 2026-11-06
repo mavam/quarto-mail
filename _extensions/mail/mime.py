@@ -19,6 +19,7 @@ from email.utils import formatdate, getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 CONTENT_TYPES = {
     ".css": "text/css",
@@ -235,7 +236,10 @@ def html_fragment(value: str) -> str:
 
 def plain_to_html(value: str) -> str:
     escaped = html.escape(normalize_text(value).strip("\n"))
-    return "\n".join(f'<div dir="auto">{line or "<br>"}</div>' for line in escaped.split("\n"))
+    return "\n".join(
+        f'<div dir="auto">{line if line.strip() else "<br>"}</div>'
+        for line in escaped.split("\n")
+    )
 
 
 def body_content(message: EmailMessage, subtype: str) -> str | None:
@@ -394,7 +398,9 @@ def quote_addresses(value: str, *, as_html: bool = False, bold_name: bool = Fals
             display_name = html.escape(name)
             if bold_name and name:
                 display_name = f"<b>{display_name}</b>"
-            linked = f'<a href="mailto:{html.escape(address, quote=True)}">{html.escape(address)}</a>'
+            # Encode URI delimiters before escaping for the HTML attribute.
+            uri = "mailto:" + quote(address, safe="@")
+            linked = f'<a href="{html.escape(uri, quote=True)}">{html.escape(address)}</a>'
             mailbox = f"&lt;{linked}&gt;"
         else:
             display_name = name
