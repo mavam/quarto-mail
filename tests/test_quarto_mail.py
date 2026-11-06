@@ -152,10 +152,10 @@ class QuartoMailTests(unittest.TestCase):
         self.render_gog()
         self.assertEqual(
             self.body("html"),
-            "<div>\n<div>Hi Jane,</div>\n<div><br></div>\n"
-            "<div>First paragraph.</div>\n<div><br></div>\n"
-            "<div>Second paragraph.</div>\n<div><br></div>\n"
-            "<div>&nbsp;&nbsp;&nbsp;&nbsp;Alex Example</div>\n</div>\n",
+            "<div dir=\"auto\">\n<div dir=\"auto\">Hi Jane,</div>\n<div><br></div>\n"
+            "<div dir=\"auto\">First paragraph.</div>\n<div><br></div>\n"
+            "<div dir=\"auto\">Second paragraph.</div>\n<div><br></div>\n"
+            "<div dir=\"auto\">&nbsp;&nbsp;&nbsp;&nbsp;Alex Example</div>\n</div>\n",
         )
         self.assertEqual(
             self.body("plain"),
@@ -170,7 +170,7 @@ class QuartoMailTests(unittest.TestCase):
         self.source.write_text(source)
         self.render_gog()
         self.assertIn(
-            "<div>First paragraph.</div>\n<div><br></div>\n<div>Second paragraph.</div>",
+            "<div dir=\"auto\">First paragraph.</div>\n<div><br></div>\n<div dir=\"auto\">Second paragraph.</div>",
             self.body("html"),
         )
         self.assertNotIn("Plain-only content.", self.body("html"))
@@ -184,7 +184,7 @@ class QuartoMailTests(unittest.TestCase):
         self.source.write_text(source)
         self.render_gog()
         self.assertIn(
-            "<div>Hi Jane,</div>\n<div><br></div>\n<div>First paragraph.</div>",
+            "<div dir=\"auto\">Hi Jane,</div>\n<div><br></div>\n<div dir=\"auto\">First paragraph.</div>",
             self.body("html"),
         )
 
@@ -213,7 +213,7 @@ class QuartoMailTests(unittest.TestCase):
         self.source.write_text(source)
         self.render_gog()
         self.assertIn(
-            "<div>Hi Jane,</div>\n<div><br></div>\n"
+            "<div dir=\"auto\">Hi Jane,</div>\n<div><br></div>\n"
             "<!-- Visible HTML follows. -->\n<div>Visible <strong>HTML</strong>.</div>",
             self.body("html"),
         )
@@ -244,8 +244,8 @@ class QuartoMailTests(unittest.TestCase):
         self.render_gog(source=draft / "message.qmd")
         html = (draft / "message.mail" / "body.html").read_text()
         self.assertIn(
-            "<div>Hi Jane,</div>\n<div><br></div>\n"
-            "<div>Write the message body in Markdown.</div>",
+            "<div dir=\"auto\">Hi Jane,</div>\n<div><br></div>\n"
+            "<div dir=\"auto\">Write the message body in Markdown.</div>",
             html,
         )
 
